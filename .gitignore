@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# generated artifacts (skill output)
+artifacts/
+out/
+
+# secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# os / editor
+.DS_Store

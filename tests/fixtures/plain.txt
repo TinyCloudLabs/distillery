@@ -1,0 +1,2 @@
+This is a plain unstructured note with no speakers at all.
+It should still parse as a single turn so downstream skills can use it.
