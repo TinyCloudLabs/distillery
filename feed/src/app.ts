@@ -21,10 +21,14 @@ export interface AppOptions {
   distDir?: string;
   /** Absolute path to the feedback JSONL log (feedback/events.jsonl). */
   feedbackFile: string;
+  /** Absolute path to PREFERENCES.md. Optional — endpoints 404 without it. */
+  preferencesFile?: string;
 }
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+/** PUT /api/preferences size cap, bytes. */
+const PREFERENCES_MAX_BYTES = 10 * 1024;
 
 /** Resolve a child path and refuse anything that escapes the base dir. */
 function safeJoin(base: string, ...parts: string[]): string | null {
@@ -50,9 +54,11 @@ function fileResponse(
   path: string,
   file: ReturnType<typeof Bun.file>,
   rangeHeader: string | null,
+  cacheControl?: string,
 ): Response {
   const size = file.size;
   const type = contentTypeFor(path, file) || "application/octet-stream";
+  const extra: Record<string, string> = cacheControl ? { "Cache-Control": cacheControl } : {};
 
   // Range support — iOS Safari requires it to seek (and often to play) audio.
   if (rangeHeader) {
@@ -80,6 +86,7 @@ function fileResponse(
           "Content-Range": `bytes ${start}-${end}/${size}`,
           "Content-Length": String(end - start + 1),
           "Accept-Ranges": "bytes",
+          ...extra,
         },
       });
     }
@@ -90,6 +97,7 @@ function fileResponse(
       "Content-Type": type,
       "Content-Length": String(size),
       "Accept-Ranges": "bytes",
+      ...extra,
     },
   });
 }
@@ -98,7 +106,32 @@ export function createApp(opts: AppOptions): Hono {
   const artifactsDir = resolve(opts.artifactsDir);
   const distDir = opts.distDir ? resolve(opts.distDir) : null;
   const feedbackFile = resolve(opts.feedbackFile);
+  const preferencesFile = opts.preferencesFile ? resolve(opts.preferencesFile) : null;
   const app = new Hono();
+
+  // PREFERENCES.md is plain text both ways: GET returns the raw file, PUT
+  // replaces it. The panel is honest about being a file editor — the
+  // [learned]-bullet conventions live in the file itself, not the API.
+  app.get("/api/preferences", async (c) => {
+    if (!preferencesFile) return c.text("preferences file not configured", 404);
+    const f = Bun.file(preferencesFile);
+    if (!(await f.exists())) return c.text("", 200, { "Content-Type": "text/plain; charset=utf-8" });
+    return c.text(await f.text(), 200, { "Content-Type": "text/plain; charset=utf-8" });
+  });
+
+  app.put("/api/preferences", async (c) => {
+    if (!preferencesFile) return c.json({ error: "preferences file not configured" }, 404);
+    const text = await c.req.text();
+    const bytes = new TextEncoder().encode(text).byteLength;
+    if (bytes > PREFERENCES_MAX_BYTES) {
+      return c.json(
+        { error: `preferences too large: ${bytes} bytes (max ${PREFERENCES_MAX_BYTES})` },
+        413,
+      );
+    }
+    await Bun.write(preferencesFile, text);
+    return c.json({ ok: true, bytes });
+  });
 
   app.post("/api/feedback", async (c) => {
     let raw: unknown;
@@ -186,17 +219,24 @@ export function createApp(opts: AppOptions): Hono {
   });
 
   // Static SPA with index.html fallback (hash routing means this is mostly "/").
+  // Cache policy: vite assets are content-hashed → immutable; everything else
+  // (index.html, sw.js, manifest) must revalidate so deploys land immediately.
   app.get("*", async (c) => {
     if (!distDir) return c.text("feed not built — run: bun run build", 404);
     const pathname = decodeURIComponent(new URL(c.req.url).pathname);
     const path = safeJoin(distDir, "." + pathname);
     if (path && path !== distDir) {
       const f = Bun.file(path);
-      if (await f.exists()) return fileResponse(path, f, c.req.header("range") ?? null);
+      if (await f.exists()) {
+        const cache = pathname.startsWith("/assets/")
+          ? "public, max-age=31536000, immutable"
+          : "no-cache";
+        return fileResponse(path, f, c.req.header("range") ?? null, cache);
+      }
     }
     const indexPath = join(distDir, "index.html");
     const index = Bun.file(indexPath);
-    if (await index.exists()) return fileResponse(indexPath, index, null);
+    if (await index.exists()) return fileResponse(indexPath, index, null, "no-cache");
     return c.text("feed not built — run: bun run build", 404);
   });
 
