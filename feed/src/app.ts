@@ -3,6 +3,14 @@
 
 import { Hono } from "hono";
 import { join, resolve, sep } from "node:path";
+import {
+  appendEvent,
+  isFeedbackAction,
+  readEvents,
+  summarizeEvents,
+  FEEDBACK_ACTIONS,
+  type FeedbackEvent,
+} from "../../skills/_shared/lib/feedback.ts";
 import { scanArtifacts } from "./scan.ts";
 import type { CardsResponse } from "./types.ts";
 
@@ -11,6 +19,8 @@ export interface AppOptions {
   artifactsDir: string;
   /** Absolute path to the built SPA (web/dist). Optional for API-only tests. */
   distDir?: string;
+  /** Absolute path to the feedback JSONL log (feedback/events.jsonl). */
+  feedbackFile: string;
 }
 
 const DEFAULT_LIMIT = 20;
@@ -87,7 +97,56 @@ function fileResponse(
 export function createApp(opts: AppOptions): Hono {
   const artifactsDir = resolve(opts.artifactsDir);
   const distDir = opts.distDir ? resolve(opts.distDir) : null;
+  const feedbackFile = resolve(opts.feedbackFile);
   const app = new Hono();
+
+  app.post("/api/feedback", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ error: "body must be JSON" }, 400);
+    }
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      return c.json({ error: "body must be a JSON object" }, 400);
+    }
+    const b = raw as Record<string, unknown>;
+
+    if (typeof b.artifact_id !== "string" || !b.artifact_id.trim()) {
+      return c.json({ error: "artifact_id: required non-empty string" }, 400);
+    }
+    if (!isFeedbackAction(b.action)) {
+      return c.json(
+        { error: `action: must be one of ${FEEDBACK_ACTIONS.join(", ")}` },
+        400,
+      );
+    }
+    if (b.note !== undefined && typeof b.note !== "string") {
+      return c.json({ error: "note: must be a string when present" }, 400);
+    }
+
+    const all = await scanArtifacts(artifactsDir);
+    const card = all.find((x) => x.id === b.artifact_id);
+    if (!card) return c.json({ error: "artifact not found" }, 404);
+
+    const event: FeedbackEvent = {
+      artifact_id: card.id,
+      artifact_type: card.type, // the artifact on disk is authoritative
+      action: b.action,
+      ts: new Date().toISOString(),
+    };
+    if (typeof b.note === "string" && b.note.trim()) event.note = b.note.trim();
+
+    await appendEvent(feedbackFile, event);
+    return c.json({ ok: true, event }, 201);
+  });
+
+  app.get("/api/feedback/summary", async (c) => {
+    const events = await readEvents(feedbackFile);
+    const cards = await scanArtifacts(artifactsDir);
+    const summary = summarizeEvents(events, cards);
+    return c.json(summary);
+  });
 
   app.get("/api/cards", async (c) => {
     const limitRaw = parseInt(c.req.query("limit") ?? "", 10);

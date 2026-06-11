@@ -343,6 +343,89 @@ a {
   color: var(--lcd-faint);
 }
 
+/* ---- feedback action row (six actions; design-lab restyle later) ---- */
+.fb {
+  margin-top: 10px;
+}
+
+.fb-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.fb-btn {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  padding: 4px 6px;
+  background: var(--btn-bg);
+  color: var(--lcd-faint);
+  border: 1px solid var(--case-deep);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.fb-btn:hover {
+  color: var(--lcd-ink);
+}
+
+.fb-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.fb-btn.sent {
+  color: var(--lcd-ink);
+  border-color: var(--lcd-ink);
+}
+
+.fb-btn.accent {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+
+.fb-note {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.fb-note-label {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--signal);
+  white-space: nowrap;
+}
+
+.fb-note input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--lcd-ink);
+  background: var(--lcd);
+  border: 1px solid var(--lcd-deep);
+  border-radius: 3px;
+  padding: 4px 6px;
+}
+
+.fb-note input::placeholder {
+  color: var(--lcd-faint);
+}
+
+.fb-status {
+  margin-top: 5px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--lcd-faint);
+}
+
+.fb-status.error {
+  color: var(--signal);
+}
+
 /* ---- full article view ---- */
 .article-back {
   display: inline-block;

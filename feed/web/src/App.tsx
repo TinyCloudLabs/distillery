@@ -44,7 +44,14 @@ function Feed() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  // Cards dismissed via the "less" feedback action — hidden immediately,
+  // session-only (the distill-preferences loop handles durable effects).
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const hideCard = useCallback((id: string) => {
+    setHidden((prev) => new Set(prev).add(id));
+  }, []);
 
   const fetchPage = useCallback(async (offset: number) => {
     const res = await fetch(`/api/cards?limit=${PAGE_SIZE}&offset=${offset}`);
@@ -102,7 +109,9 @@ function Feed() {
     return () => io.disconnect();
   }, [hasMore, loading, loadingMore, loadMore]);
 
-  const visible = activeTag ? cards.filter((c) => c.tags.includes(activeTag)) : cards;
+  const visible = cards.filter(
+    (c) => !hidden.has(c.id) && (!activeTag || c.tags.includes(activeTag)),
+  );
 
   return (
     <>
@@ -156,6 +165,7 @@ function Feed() {
               idx={i + 1}
               activeTag={activeTag}
               onTagFilter={setActiveTag}
+              onHide={hideCard}
             />
           ))
         )}
