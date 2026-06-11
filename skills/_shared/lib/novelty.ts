@@ -609,6 +609,467 @@ function hasEngagedReply(t: Transcript, turnIndex: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Narrative seeds — material-format matching for the podcast (the upstream lever)
+// ---------------------------------------------------------------------------
+//
+// A card needs ONE insight; a podcast needs a sustained THROUGH-LINE across
+// meetings — development, tension, a turn. That is a structurally higher bar,
+// so the podcast survey must PRIORITIZE material that already has temporal
+// development (a real before→after), not just "interesting things from recent
+// meetings". This analyzer composes the existing deterministic signals
+// (quantified drift, single-voice topics, cross-meeting term/entity spans) into
+// ranked NARRATIVE SEEDS, each carrying its chronological evidence chain.
+//
+// It is a SURFACER, not a judge: it emits the arc skeleton (the evidence,
+// ordered in time, with a measured "development" signal). The agent reads the
+// chain and decides whether it is a real arc worth an episode. NO model calls.
+//
+// The cardinal rule that separates a seed from a card: a seed must span 2+
+// meetings AND show development across them (a quantity that MOVED, a stance/
+// topic that RECURS and evolves). A signal confined to one meeting — however
+// interesting — is a card, never a lead. So every seed here has
+// `transcripts.length >= 2` by construction.
+
+export type NarrativeSeedKind =
+  /** A tracked quantity whose VALUE changed across meetings — inherent arc. */
+  | "quantified-drift"
+  /** A single-voice topic that recurs across 3+ meetings — one person's arc. */
+  | "single-voice-arc"
+  /** An entity/term that spans 3+ meetings — a sustained through-line. */
+  | "cross-meeting-topic";
+
+/** One link in a seed's chronological evidence chain. */
+export interface NarrativeEvidence {
+  transcript: string;
+  date?: string;
+  timestamp?: string;
+  turnIndex: number;
+  speaker?: string;
+  /** The concrete moment: a quantity value, or the term, with surrounding context. */
+  value?: string;
+  context: string;
+}
+
+export interface NarrativeSeed {
+  kind: NarrativeSeedKind;
+  /** Human-readable handle for the through-line (topic terms / entity / value). */
+  label: string;
+  /** Distinct transcripts the seed spans, in chronological order. */
+  transcripts: string[];
+  /**
+   * Development score in [0,1]: how much the seed actually MOVES across the set.
+   * Higher = stronger before→after. Drift where the value changed scores above
+   * a value that merely recurs identically; a topic that spans more meetings
+   * and changes speaker/stance scores above one that's mentioned flatly.
+   * This is a deterministic proxy — the agent judges whether it's a real arc.
+   */
+  development: number;
+  /** Composite rank score: development weighted by reach (meetings spanned). */
+  score: number;
+  /** The chronological evidence chain — the arc skeleton, ordered in time. */
+  evidence: NarrativeEvidence[];
+  /** Why this scored as it did (for the agent's read + the markdown report). */
+  rationale: string;
+}
+
+export interface NarrativeSeedOptions {
+  /** Cap on seeds returned (default 20). */
+  maxSeeds?: number;
+  /**
+   * Min distinct meetings a single-voice / cross-meeting-topic seed must span
+   * to count as an arc (default 3). Drift seeds need only 2 (a value that moved
+   * between two meetings is already a before→after). A flat topic confined to
+   * fewer meetings is a card, not an episode lead — so it is dropped here.
+   */
+  minSpanMeetings?: number;
+}
+
+/** Normalize a quantity value for change-detection: lowercase, strip $ , and spaces. */
+function normalizeQuantityValue(value: string): string {
+  return value.toLowerCase().replace(/[$,\s]/g, "");
+}
+
+/**
+ * Count distinct normalized values in a drift group's chronological mentions,
+ * and whether the FIRST and LAST differ (the clearest before→after). A group
+ * where "$100k" became "50 grand" has movement; "$100k" repeated verbatim in
+ * three meetings does not (it's a recurring fact, not an arc).
+ */
+function quantityMovement(mentions: QuantityMention[]): {
+  distinctValues: number;
+  endpointsDiffer: boolean;
+} {
+  const normalized = mentions.map((m) => normalizeQuantityValue(m.value));
+  const distinctValues = new Set(normalized).size;
+  const endpointsDiffer =
+    normalized.length >= 2 && normalized[0] !== normalized[normalized.length - 1];
+  return { distinctValues, endpointsDiffer };
+}
+
+/** Chronological order for a transcript path within an already-sorted mention set. */
+function transcriptsInChronoOrder(mentions: { transcript: string }[]): string[] {
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const m of mentions) {
+    if (!seen.has(m.transcript)) {
+      seen.add(m.transcript);
+      order.push(m.transcript);
+    }
+  }
+  return order;
+}
+
+/**
+ * Score a transcript SET for NARRATIVE POTENTIAL and return ranked seeds, each
+ * with its chronological evidence chain. Composes three deterministic signals:
+ *
+ *   1. quantified-drift   — a tracked quantity whose VALUE moved across 2+
+ *                           meetings (the inherent arc: a number/commitment
+ *                           that changed over time). Scored by how much it
+ *                           moved (distinct values, endpoints differ) × reach.
+ *   2. single-voice-arc   — a single-voice topic one person carries across
+ *                           minSpanMeetings+ meetings, AND the room's
+ *                           engagement with it SHIFTS across the set (stance
+ *                           development). Reach alone is not development.
+ *   3. cross-meeting-topic — an entity/term that recurs across minSpanMeetings+
+ *                           meetings with multiple speakers AND shows a SHIFT —
+ *                           it left and re-entered the agenda, or changed
+ *                           hands across voices. Recurrence alone is not an arc.
+ *
+ * Development requires a real before→after for EVERY kind, not mere recurrence:
+ * a flat topic that simply repeats across meetings has development floored at 0
+ * (it sorts below every real arc and is labeled "recurrence only" — surfaced as
+ * context, never scored as an arc), mirroring quantified-drift's drop of an
+ * identical recurring value. Seeds are ranked by `score` (development × reach).
+ * The agent reads the evidence chain and judges whether the arc is real — this
+ * only surfaces the skeleton. A set with a real shift scores ABOVE a flat set.
+ */
+export function scoreNarrativeSeeds(
+  transcripts: Transcript[],
+  opts: NarrativeSeedOptions = {},
+): NarrativeSeed[] {
+  const maxSeeds = opts.maxSeeds ?? 20;
+  const minSpan = opts.minSpanMeetings ?? 3;
+
+  const seeds: NarrativeSeed[] = [];
+
+  // --- 1. Quantified drift: a value that MOVED across meetings ---------------
+  const quantities = trackQuantities(transcripts);
+  for (const group of quantities.groups) {
+    // trackQuantities already guarantees 2+ transcripts and chronological order.
+    const { distinctValues, endpointsDiffer } = quantityMovement(group.mentions);
+    // Reach: how many meetings the drift spans (2 = a clean before→after).
+    const reach = group.transcripts.length;
+    // Development: a value that actually changed is the arc. Endpoints differing
+    // is the strongest signal; more distinct values adds to it; a value that
+    // only recurs identically across meetings has near-zero development (it's a
+    // fact the room already shares, not a story).
+    let development = 0;
+    if (endpointsDiffer) development += 0.6;
+    development += Math.min(0.4, (distinctValues - 1) * 0.2); // 0 if all identical
+    development = Math.min(1, development);
+    if (development <= 0) continue; // no movement = no arc; it's a recurring fact
+    seeds.push({
+      kind: "quantified-drift",
+      label: group.topicKey.length > 0 ? group.topicKey.join(", ") : group.mentions[0]!.value,
+      transcripts: group.transcripts,
+      development,
+      score: development * reachWeight(reach),
+      evidence: group.mentions.map((m) => ({
+        transcript: m.transcript,
+        date: m.date,
+        timestamp: m.timestamp,
+        turnIndex: m.turnIndex,
+        speaker: m.speaker,
+        value: m.value,
+        context: m.context,
+      })),
+      rationale:
+        `${distinctValues} distinct value(s) across ${reach} meeting(s)` +
+        (endpointsDiffer
+          ? `; first "${group.mentions[0]!.value}" → last "${group.mentions[group.mentions.length - 1]!.value}"`
+          : "; endpoints unchanged (weak drift)"),
+    });
+  }
+
+  // --- 2 & 3. Topic arcs spanning meetings -----------------------------------
+  const singleVoice = findSingleVoiceTopics(transcripts);
+  for (const topic of singleVoice) {
+    if (topic.transcripts.length < minSpan) continue; // a topic in <minSpan meetings is a card
+    const chronoMentions = [...topic.mentions].sort(chronoCompareSV);
+    const orderedTranscripts = transcriptsInChronoOrder(chronoMentions);
+    // Development for a single-voice arc: spanning more meetings is the arc, and
+    // a SHIFT in engagement (the room ignored it early, then engaged — or vice
+    // versa) is stance development worth surfacing.
+    const reach = orderedTranscripts.length;
+    const engagementShift = hasEngagementShift(chronoMentions);
+    // Development must come from an actual SHIFT, not mere recurrence. For a
+    // single-voice topic the only deterministic movement signal we have is an
+    // engagement shift (the room ignored it early then engaged, or vice versa).
+    // Reach alone is NOT development: the same person repeating the same point
+    // identically across 3 meetings is flat recurrence, not an arc. With no
+    // detected shift we floor development at 0 so the seed sorts below every
+    // real arc and is labeled "recurrence only" — surfaced as context, never
+    // scored as an arc. (Matches quantified-drift's "no movement = no arc".)
+    let development = 0;
+    if (engagementShift) {
+      // A real stance shift: base on it, with reach adding to the ceiling.
+      development = Math.min(1, 0.4 + Math.min(0.6, (reach - 2) * 0.25 + 0.1));
+    }
+    seeds.push({
+      kind: "single-voice-arc",
+      label: topic.display,
+      transcripts: orderedTranscripts,
+      development,
+      score: development * reachWeight(reach),
+      evidence: chronoMentions.map((m) => ({
+        transcript: m.transcript,
+        date: m.date,
+        timestamp: m.timestamp,
+        turnIndex: m.turnIndex,
+        speaker: topic.speaker,
+        context: m.context,
+      })),
+      rationale: engagementShift
+        ? `only ${topic.speaker} voices "${topic.display}" across ${reach} meeting(s); engagement shifts across the set (stance development)`
+        : `only ${topic.speaker} voices "${topic.display}" across ${reach} meeting(s); recurrence only, no detected development (engagement flat — surfaced as context, not an arc)`,
+    });
+  }
+
+  // Cross-meeting topic: any entity/term recurring across minSpan+ meetings with
+  // 2+ speakers — a sustained through-line the room kept returning to. Built from
+  // the same token extraction the index/scan use, so classification agrees.
+  for (const topic of crossMeetingTopics(transcripts, minSpan)) {
+    const reach = topic.transcripts.length;
+    // Development must come from an actual SHIFT, not mere recurrence. A topic
+    // every meeting mentions flatly is a recurring fact, not an arc. Two
+    // deterministic movement signals we can detect from the per-meeting
+    // evidence + corpus chronology:
+    //   - agenda movement: the topic LEFT and RE-ENTERED the agenda — it skips
+    //     one or more meetings inside its span (it dropped off, then came back),
+    //     which is a real before→after in the room's attention.
+    //   - voice spread: a DIFFERENT speaker carries it across meetings — the
+    //     thread moved from one voice to another (it spread / changed hands),
+    //     rather than the same person repeating the same point.
+    const { agendaMovement, voiceSpread } = topicDevelopmentSignals(
+      topic,
+      orderedTranscriptPaths(transcripts),
+    );
+    const hasShift = agendaMovement || voiceSpread;
+    // No detected shift = flat recurrence: floor development at 0 so it sorts
+    // below every real arc, and label it "recurrence only". Surfaced as
+    // context, never scored as an arc. (Matches quantified-drift's `continue`
+    // intent: recurrence alone is not development.)
+    let development = 0;
+    if (hasShift) {
+      // Lower ceiling than drift (a topic moving is a weaker arc than a value
+      // that moved) so drift outranks it at equal reach.
+      development = Math.min(0.7, (reach - minSpan) * 0.15 + 0.3);
+      if (topic.speakerCount >= 3) development += 0.1;
+      development = Math.min(1, development);
+    }
+    const shiftNote = agendaMovement
+      ? "left and re-entered the agenda (attention movement)"
+      : voiceSpread
+        ? "carried by a changing set of voices (the thread spread)"
+        : "recurrence only, no detected development (surfaced as context, not an arc)";
+    seeds.push({
+      kind: "cross-meeting-topic",
+      label: topic.display,
+      transcripts: topic.transcripts,
+      development,
+      score: development * reachWeight(reach),
+      evidence: topic.evidence,
+      rationale: `"${topic.display}" recurs across ${reach} meeting(s), ${topic.speakerCount} speaker(s) — ${shiftNote}`,
+    });
+  }
+
+  return seeds
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        b.transcripts.length - a.transcripts.length ||
+        a.label.localeCompare(b.label),
+    )
+    .slice(0, maxSeeds);
+}
+
+/** Reach weight: a seed spanning more meetings has a higher structural ceiling. */
+function reachWeight(meetings: number): number {
+  // 2 meetings → 1.0, 3 → 1.3, 4 → 1.5, asymptotic — reach matters but a real
+  // before→after across two meetings is already a valid arc.
+  return 1 + Math.min(0.8, (meetings - 2) * 0.25);
+}
+
+/** Chronological compare for single-voice mentions (date → transcript → ts → turn). */
+function chronoCompareSV(a: SingleVoiceMention, b: SingleVoiceMention): number {
+  const dateA = a.date ?? "";
+  const dateB = b.date ?? "";
+  if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+  if (a.transcript !== b.transcript) return a.transcript < b.transcript ? -1 : 1;
+  const ta = timestampSeconds(a.timestamp);
+  const tb = timestampSeconds(b.timestamp);
+  if (ta !== tb) return ta - tb;
+  return a.turnIndex - b.turnIndex;
+}
+
+/**
+ * Did the room's engagement with a single-voice topic CHANGE across the
+ * chronological mentions? A topic ignored in early meetings then engaged (or
+ * vice versa) is a stance arc; uniform engagement is flat. Compares the
+ * engaged-flag of the first vs. last mention as a cheap proxy.
+ */
+function hasEngagementShift(mentions: SingleVoiceMention[]): boolean {
+  if (mentions.length < 2) return false;
+  return mentions[0]!.engaged !== mentions[mentions.length - 1]!.engaged;
+}
+
+/** All transcript paths in corpus chronological order (date → path). */
+function orderedTranscriptPaths(transcripts: Transcript[]): string[] {
+  return [...transcripts]
+    .sort((a, b) => {
+      const da = a.date ?? "";
+      const db = b.date ?? "";
+      if (da !== db) return da < db ? -1 : 1;
+      return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+    })
+    .map((t) => t.path);
+}
+
+/**
+ * Deterministic development signals for a cross-meeting topic — an actual SHIFT
+ * across the set, never mere recurrence:
+ *   - agendaMovement: the topic appears in NON-CONTIGUOUS meetings within its
+ *     span — it left the agenda for one or more meetings, then came back. A
+ *     before→after in the room's attention, not a steady drumbeat.
+ *   - voiceSpread: the speaker who carries the topic CHANGES across meetings
+ *     (first-sighting speaker differs between the earliest and a later meeting)
+ *     — the thread moved from one voice to another rather than one person
+ *     repeating it verbatim every standup.
+ * If neither fires, the topic is flat recurrence (a sustained but undeveloped
+ * fact), and the caller floors its development at 0.
+ */
+function topicDevelopmentSignals(
+  topic: CrossMeetingTopic,
+  corpusChrono: string[],
+): { agendaMovement: boolean; voiceSpread: boolean } {
+  // Agenda movement: the topic's meetings are not a contiguous run of the
+  // corpus timeline — there is a corpus meeting between its first and last
+  // sighting where the topic does NOT appear.
+  const present = new Set(topic.transcripts);
+  const firstIdx = corpusChrono.findIndex((p) => present.has(p));
+  let lastIdx = -1;
+  for (let i = corpusChrono.length - 1; i >= 0; i--) {
+    if (present.has(corpusChrono[i]!)) {
+      lastIdx = i;
+      break;
+    }
+  }
+  let agendaMovement = false;
+  if (firstIdx >= 0 && lastIdx > firstIdx) {
+    for (let i = firstIdx + 1; i < lastIdx; i++) {
+      if (!present.has(corpusChrono[i]!)) {
+        agendaMovement = true;
+        break;
+      }
+    }
+  }
+  // Voice spread: the first-sighting speaker is not the same across all
+  // meetings (the thread changed hands / spread, not one voice repeating).
+  const speakers = topic.evidence
+    .map((e) => (e.speaker ?? "").toLowerCase())
+    .filter((s) => s.length > 0);
+  const voiceSpread = new Set(speakers).size >= 2;
+  return { agendaMovement, voiceSpread };
+}
+
+interface CrossMeetingTopic {
+  display: string;
+  transcripts: string[];
+  speakerCount: number;
+  evidence: NarrativeEvidence[];
+}
+
+/**
+ * Entities/terms that recur across `minSpan`+ DISTINCT meetings, voiced by 2+
+ * speakers — sustained cross-meeting through-lines. Uses the same
+ * `enumerateTurnTokens` extraction as the index/scan so classification agrees,
+ * and filters speaker names (`collectNameWords`). One mention per turn per term;
+ * evidence is the first mention in each meeting, in chronological order.
+ */
+function crossMeetingTopics(
+  transcripts: Transcript[],
+  minSpan: number,
+): CrossMeetingTopic[] {
+  const nameWords = collectNameWords(transcripts);
+  interface Agg {
+    display: Map<string, number>;
+    perMeeting: Map<string, NarrativeEvidence>; // first sighting per transcript
+    speakers: Set<string>;
+    entity: boolean;
+  }
+  const agg = new Map<string, Agg>();
+
+  // Order transcripts chronologically up front so "first sighting per meeting"
+  // and the evidence chain come out in time order.
+  const ordered = [...transcripts].sort((a, b) => {
+    const da = a.date ?? "";
+    const db = b.date ?? "";
+    if (da !== db) return da < db ? -1 : 1;
+    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+  });
+
+  for (const t of ordered) {
+    for (const [turnIndex, turn] of t.turns.entries()) {
+      if (!turn.speaker) continue;
+      const seenInTurn = new Set<string>();
+      for (const tok of enumerateTurnTokens(turn.text)) {
+        const key = tok.display.toLowerCase();
+        if (key.length < 3) continue;
+        if (STOPWORDS.has(key)) continue;
+        if (key.split(/\s+/).some((w) => nameWords.has(w))) continue;
+        if (seenInTurn.has(key)) continue;
+        seenInTurn.add(key);
+        const a =
+          agg.get(key) ??
+          ({ display: new Map(), perMeeting: new Map(), speakers: new Set(), entity: tok.entity } as Agg);
+        a.display.set(tok.display, (a.display.get(tok.display) ?? 0) + 1);
+        a.entity ||= tok.entity;
+        a.speakers.add(turn.speaker.toLowerCase());
+        if (!a.perMeeting.has(t.path)) {
+          a.perMeeting.set(t.path, {
+            transcript: t.path,
+            date: t.date,
+            timestamp: turn.timestamp,
+            turnIndex,
+            speaker: turn.speaker,
+            context: wordWindow(turn.text, tok.start, tok.end, SV_CONTEXT_WORDS),
+          });
+        }
+        agg.set(key, a);
+      }
+    }
+  }
+
+  const out: CrossMeetingTopic[] = [];
+  for (const a of agg.values()) {
+    if (a.perMeeting.size < minSpan) continue; // must span minSpan+ meetings
+    if (a.speakers.size < 2) continue; // a single speaker is single-voice, not cross
+    const display = [...a.display.entries()].sort(
+      (x, y) => y[1] - x[1] || x[0].localeCompare(y[0]),
+    )[0]![0];
+    const evidence = [...a.perMeeting.values()]; // already chronological (ordered scan)
+    out.push({
+      display,
+      transcripts: evidence.map((e) => e.transcript),
+      speakerCount: a.speakers.size,
+      evidence,
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Prior-artifact index — the novelty baseline
 // ---------------------------------------------------------------------------
 
@@ -812,6 +1273,58 @@ export function renderNoveltyMarkdown(scan: NoveltyScan): string {
       out.push(`  - sources: ${e.source_transcripts.join(", ")}`);
   }
   for (const w of scan.baseline.warnings) out.push(`- WARNING: ${w}`);
+  out.push("");
+  return out.join("\n");
+}
+
+/**
+ * Render ranked narrative seeds as a readable markdown report — the arc
+ * skeleton for the podcast survey. Each seed shows its kind, reach, development
+ * score, and the chronological evidence chain (the before→after). Candidates
+ * only: the agent reads the chain and judges whether the arc is real.
+ */
+export function renderNarrativeSeedsMarkdown(seeds: NarrativeSeed[]): string {
+  const out: string[] = [];
+  out.push("# Narrative seeds (podcast survey — material-format matching)");
+  out.push("");
+  out.push(
+    "A podcast needs a sustained through-line across meetings (a real" +
+      " before→after), not a single insight. These seeds are ranked by" +
+      " narrative potential (development × reach). Each is a CANDIDATE arc" +
+      " skeleton — read the chronological evidence chain and judge whether the" +
+      " development is real. A seed confined to one meeting is a card, not a" +
+      " lead, and never appears here.",
+  );
+  out.push("");
+  out.push(`- seeds: ${seeds.length}`);
+  if (seeds.length === 0) {
+    out.push("");
+    out.push(
+      "- (none — no through-line shows temporal development across 2+" +
+        " meetings. Zero episodes is a valid result: do not lead with a flat" +
+        " recap of recent meetings.)",
+    );
+    out.push("");
+    return out.join("\n");
+  }
+  for (const s of seeds) {
+    out.push("");
+    out.push(
+      `## [${s.kind}] ${s.label} — score ${s.score.toFixed(2)} ` +
+        `(development ${s.development.toFixed(2)}, ${s.transcripts.length} meeting(s))`,
+    );
+    out.push("");
+    out.push(`- ${s.rationale}`);
+    out.push("- evidence chain (chronological):");
+    for (const e of s.evidence) {
+      const when = [e.date, e.timestamp].filter(Boolean).join(" ");
+      const who = e.speaker ?? "(unattributed)";
+      const val = e.value ? `**${e.value}** — ` : "";
+      out.push(
+        `  - ${when ? `${when} — ` : ""}${who}: ${val}“…${e.context}…” \`${e.transcript}\``,
+      );
+    }
+  }
   out.push("");
   return out.join("\n");
 }

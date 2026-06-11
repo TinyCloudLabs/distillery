@@ -477,3 +477,67 @@ describe("digest.ts CLI — duration metadata", () => {
     expect(digest.transcripts[0]?.duration).toBe("30 min");
   });
 });
+
+// ---------------------------------------------------------------------------
+// narrative-seeds.ts CLI — surfaces the through-line arc skeleton; a drifting
+// quantity across two meetings becomes a ranked quantified-drift seed
+// ---------------------------------------------------------------------------
+
+describe("narrative-seeds.ts CLI — material-format matching", () => {
+  beforeAll(async () => {
+    await writeFile(
+      join(cliDir, "seed-one.md"),
+      "# Sync One\n**Date:** 2026-03-01\n\n## Transcript\n\n" +
+        "**Ada Lovelace (00:05:00):**\nThe bridge round needs $100k to close before demo day.\n\n" +
+        "**Grace Hopper:**\nRight, I hear you on the bridge round timeline.\n",
+    );
+    await writeFile(
+      join(cliDir, "seed-two.md"),
+      "# Sync Two\n**Date:** 2026-03-15\n\n## Transcript\n\n" +
+        "**Ada Lovelace (00:02:00):**\nWe only need 50 grand now to close the bridge round, half of before.\n\n" +
+        "**Grace Hopper:**\nGood progress on the bridge round then.\n",
+    );
+  });
+
+  test("emits a ranked quantified-drift seed with a chronological evidence chain", () => {
+    const res = runScript(
+      "narrative-seeds.ts",
+      join(cliDir, "seed-one.md"),
+      join(cliDir, "seed-two.md"),
+      "--min-span",
+      "2",
+    );
+    expect(res.exitCode).toBe(0);
+    const out = JSON.parse(res.stdout) as {
+      transcriptCount: number;
+      seeds: { kind: string; transcripts: string[]; evidence: { value?: string }[] }[];
+    };
+    expect(out.transcriptCount).toBe(2);
+    const drift = out.seeds.find((s) => s.kind === "quantified-drift");
+    expect(drift).toBeDefined();
+    expect(drift!.transcripts).toHaveLength(2);
+    expect(drift!.evidence.map((e) => e.value)).toEqual(["$100k", "50 grand"]);
+  });
+
+  test("--format md renders the seed report", () => {
+    const res = runScript(
+      "narrative-seeds.ts",
+      join(cliDir, "seed-one.md"),
+      join(cliDir, "seed-two.md"),
+      "--min-span",
+      "2",
+      "--format",
+      "md",
+    );
+    expect(res.exitCode).toBe(0);
+    expect(res.stdout).toContain("Narrative seeds");
+    expect(res.stdout).toContain("quantified-drift");
+    expect(res.stdout).toContain('first "$100k" → last "50 grand"');
+  });
+
+  test("unknown flags exit 2 with usage", () => {
+    const res = runScript("narrative-seeds.ts", "x.md", "--bogus");
+    expect(res.exitCode).toBe(2);
+    expect(res.stderr).toContain("usage:");
+  });
+});
