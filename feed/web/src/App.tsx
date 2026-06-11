@@ -30,13 +30,28 @@ function useRoute(): Route {
 
 export function App() {
   const route = useRoute();
+  // Cards dismissed via the "less" feedback action — hidden immediately,
+  // session-only (the distill-preferences loop handles durable effects).
+  // Lives here, not in Feed, so a hide survives feed ⇄ article navigation
+  // (Feed unmounts while an article is open).
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  const hideCard = useCallback((id: string) => {
+    setHidden((prev) => new Set(prev).add(id));
+  }, []);
+
   if (route.kind === "article") {
-    return <ArticleView type={route.type} slug={route.slug} />;
+    return <ArticleView type={route.type} slug={route.slug} onHide={hideCard} />;
   }
-  return <Feed />;
+  return <Feed hidden={hidden} onHide={hideCard} />;
 }
 
-function Feed() {
+function Feed({
+  hidden,
+  onHide,
+}: {
+  hidden: ReadonlySet<string>;
+  onHide: (id: string) => void;
+}) {
   const [cards, setCards] = useState<FeedCard[]>([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -102,7 +117,9 @@ function Feed() {
     return () => io.disconnect();
   }, [hasMore, loading, loadingMore, loadMore]);
 
-  const visible = activeTag ? cards.filter((c) => c.tags.includes(activeTag)) : cards;
+  const visible = cards.filter(
+    (c) => !hidden.has(c.id) && (!activeTag || c.tags.includes(activeTag)),
+  );
 
   return (
     <>
@@ -156,6 +173,7 @@ function Feed() {
               idx={i + 1}
               activeTag={activeTag}
               onTagFilter={setActiveTag}
+              onHide={onHide}
             />
           ))
         )}
@@ -166,9 +184,30 @@ function Feed() {
   );
 }
 
-function ArticleView({ type, slug }: { type: string; slug: string }) {
+function ArticleView({
+  type,
+  slug,
+  onHide,
+}: {
+  type: string;
+  slug: string;
+  onHide: (id: string) => void;
+}) {
   const [card, setCard] = useState<FeedCard | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // "less" removes the card from the feed — honor that here too: record the
+  // hide, let the "✓ LESS — REMOVED" confirmation flash, then return to the
+  // feed (where the card is now gone).
+  const hideAndReturn = useCallback(
+    (id: string) => {
+      onHide(id);
+      window.setTimeout(() => {
+        location.hash = "#/";
+      }, 600);
+    },
+    [onHide],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -197,7 +236,7 @@ function ArticleView({ type, slug }: { type: string; slug: string }) {
       </a>
       {error && <div className="feed-error">! {error}</div>}
       {!card && !error && <div className="feed-status">-- LOADING --</div>}
-      {card && <FullCard card={card} />}
+      {card && <FullCard card={card} onHide={hideAndReturn} />}
     </>
   );
 }

@@ -5,6 +5,10 @@ node_modules/
 artifacts/
 out/
 
+# feedback event log (personal data, like artifacts/) — anchored to the
+# repo root so a future source dir named feedback/ isn't silently ignored
+/feedback/
+
 # secrets
 .env
 .env.*

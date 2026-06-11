@@ -1,5 +1,6 @@
 import { marked } from "marked";
-import type { FeedCard } from "../../src/types.ts";
+import { useState } from "react";
+import type { FeedbackAction, FeedCard } from "../../src/types.ts";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -90,6 +91,133 @@ function Tags({
   );
 }
 
+/* ---- feedback: six actions, each teaching one unambiguous lesson ----
+   more         positive + generalize          (one-tap)
+   less         negative + generalize          (optional note; hides card)
+   save         utility                        (one-tap)
+   already_knew novelty calibration            (one-tap)
+   wrong        accuracy challenge             (optional note)
+   promote      commission a deeper artifact   (one-tap; queued confirmation) */
+
+const FB_LABELS: Record<FeedbackAction, string> = {
+  more: "+MORE",
+  less: "-LESS",
+  save: "SAVE",
+  already_knew: "KNEW",
+  wrong: "WRONG",
+  promote: "PROMOTE",
+};
+
+const FB_CONFIRM: Record<FeedbackAction, string> = {
+  more: "✓ MORE LIKE THIS",
+  less: "✓ LESS — REMOVED",
+  save: "✓ SAVED",
+  already_knew: "✓ NOVELTY NOTED",
+  wrong: "✓ FLAGGED WRONG",
+  promote: "▸ QUEUED FOR DEEPER ARTIFACT",
+};
+
+/** Actions that prompt for an optional free-text note before sending. */
+const FB_NOTED: ReadonlySet<FeedbackAction> = new Set(["less", "wrong"]);
+
+type FbState =
+  | { kind: "idle" }
+  | { kind: "noting"; action: FeedbackAction }
+  | { kind: "sending"; action: FeedbackAction }
+  | { kind: "sent"; action: FeedbackAction };
+
+export function FeedbackBar({
+  card,
+  onHide,
+}: {
+  card: FeedCard;
+  onHide?: (id: string) => void;
+}) {
+  const [state, setState] = useState<FbState>({ kind: "idle" });
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const send = async (action: FeedbackAction, noteText?: string) => {
+    setState({ kind: "sending", action });
+    setError(null);
+    try {
+      const body: Record<string, string> = { artifact_id: card.id, action };
+      if (noteText?.trim()) body.note = noteText.trim();
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`api ${res.status}`);
+      setNote("");
+      setState({ kind: "sent", action });
+      if (action === "less") onHide?.(card.id); // hide immediately client-side
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setState({ kind: "idle" });
+    }
+  };
+
+  const tap = (action: FeedbackAction) => {
+    if (state.kind === "sending") return;
+    if (FB_NOTED.has(action)) {
+      setNote("");
+      setState({ kind: "noting", action });
+    } else {
+      void send(action);
+    }
+  };
+
+  if (state.kind === "noting") {
+    const action = state.action;
+    return (
+      <div className="fb">
+        <div className="fb-note">
+          <span className="fb-note-label">{FB_LABELS[action]}?</span>
+          <input
+            type="text"
+            value={note}
+            placeholder="optional note…"
+            autoFocus
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void send(action, note);
+              if (e.key === "Escape") setState({ kind: "idle" });
+            }}
+          />
+          <button type="button" className="fb-btn accent" onClick={() => void send(action, note)}>
+            SEND
+          </button>
+          <button type="button" className="fb-btn" onClick={() => setState({ kind: "idle" })}>
+            ESC
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fb">
+      <div className="fb-row">
+        {(Object.keys(FB_LABELS) as FeedbackAction[]).map((action) => (
+          <button
+            key={action}
+            type="button"
+            className={`fb-btn${state.kind === "sent" && state.action === action ? " sent" : ""}`}
+            disabled={state.kind === "sending"}
+            title={action.replace("_", " ")}
+            onClick={() => tap(action)}
+          >
+            {FB_LABELS[action]}
+          </button>
+        ))}
+      </div>
+      {state.kind === "sent" && <div className="fb-status">{FB_CONFIRM[state.action]}</div>}
+      {error && <div className="fb-status error">! FEEDBACK FAILED ({error})</div>}
+    </div>
+  );
+}
+
 function Foot({ card }: { card: FeedCard }) {
   const q = card.quality;
   return (
@@ -114,11 +242,13 @@ export function Card({
   idx,
   activeTag,
   onTagFilter,
+  onHide,
 }: {
   card: FeedCard;
   idx: number;
   activeTag: string | null;
   onTagFilter: (tag: string | null) => void;
+  onHide?: (id: string) => void;
 }) {
   const isArticle = card.type === "article";
   const body = card.body
@@ -167,6 +297,7 @@ export function Card({
         )}
         {card.audio_url && <AudioPlayer src={card.audio_url} />}
         <Tags card={card} activeTag={activeTag} onTagFilter={onTagFilter} />
+        <FeedbackBar card={card} onHide={onHide} />
         <Foot card={card} />
       </div>
     </article>
@@ -174,7 +305,14 @@ export function Card({
 }
 
 /** Full-page view for an article (or any card opened directly). */
-export function FullCard({ card }: { card: FeedCard }) {
+export function FullCard({
+  card,
+  onHide,
+}: {
+  card: FeedCard;
+  /** "less" semantics: remove from feed. The article view hides + returns. */
+  onHide?: (id: string) => void;
+}) {
   return (
     <article className="chassis article">
       {card.hero_image_url && (
@@ -206,6 +344,7 @@ export function FullCard({ card }: { card: FeedCard }) {
             ))}
           </div>
         )}
+        <FeedbackBar card={card} onHide={onHide} />
         <Foot card={card} />
       </div>
     </article>

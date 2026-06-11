@@ -3,6 +3,20 @@
 // whatever artifacts the skills produce, including types it hasn't seen,
 // so `type` is an open string here and most fields are optional.
 
+// Feed-side mirror of the feedback action union
+// (skills/_shared/lib/feedback.ts — canonical). Mirrored here because the
+// browser bundle can't import that lib (it pulls in node:fs).
+export const FEEDBACK_ACTIONS = [
+  "more",
+  "less",
+  "save",
+  "already_knew",
+  "wrong",
+  "promote",
+] as const;
+
+export type FeedbackAction = (typeof FEEDBACK_ACTIONS)[number];
+
 export interface SourceQuote {
   quote: string;
   speaker?: string;

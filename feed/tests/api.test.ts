@@ -14,7 +14,11 @@ beforeAll(async () => {
   fx = await makeFixture();
   distDir = await mkdtemp(join(tmpdir(), "distillery-feed-dist-"));
   await writeFile(join(distDir, "index.html"), "<!doctype html><title>feed</title>");
-  app = createApp({ artifactsDir: fx.dir, distDir });
+  app = createApp({
+    artifactsDir: fx.dir,
+    distDir,
+    feedbackFile: join(distDir, "events.jsonl"),
+  });
 });
 
 afterAll(async () => {
