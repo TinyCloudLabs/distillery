@@ -14,6 +14,12 @@ import {
 } from "../../skills/_shared/lib/feedback.ts";
 import { scanArtifacts } from "./scan.ts";
 import { resolveAuth, setupAuth, type AuthEnv, type AuthOptions } from "./auth.ts";
+import {
+  parseGenerateBody,
+  readRunStatus,
+  startGeneration,
+  type GenerateConfig,
+} from "./generate.ts";
 import type { CardsResponse } from "./types.ts";
 
 export interface AppOptions {
@@ -31,6 +37,13 @@ export interface AppOptions {
   auth?: AuthOptions;
   /** Absolute path to PREFERENCES.md. Optional — endpoints 404 without it. */
   preferencesFile?: string;
+  /**
+   * Generate-button config (spec §8). When unset, POST /api/generate is
+   * disabled (501) — tests inject a fake spawn + tmpdir runs dir. In prod the
+   * server passes `{ repoRoot }`, and the spawned run inherits the server's env
+   * (TRANSCRIPT_DIRS + GEMINI key + claude on PATH — see .env.example).
+   */
+  generate?: GenerateConfig;
 }
 
 const DEFAULT_LIMIT = 20;
@@ -133,6 +146,7 @@ export function createApp(opts: AppOptions): Hono<AuthEnv> {
   const distDir = opts.distDir ? resolve(opts.distDir) : null;
   const feedbackFile = resolve(opts.feedbackFile);
   const preferencesFile = opts.preferencesFile ? resolve(opts.preferencesFile) : null;
+  const generateConfig = opts.generate ?? null;
   const app = new Hono<AuthEnv>();
 
   // Front-door gate: must be registered before any route. Gates /api/* and
@@ -239,6 +253,51 @@ export function createApp(opts: AppOptions): Hono<AuthEnv> {
     const cards = await scanArtifacts(artifactsDir);
     const summary = summarizeEvents(events, cards);
     return c.json(summary);
+  });
+
+  // POST /api/generate — fire the feed-run loop on demand (spec §8). GATED by
+  // the /api/* front-door (an unauth POST → 401 before any of this). This is the
+  // highest-privilege route: a full run spends Gemini money + publishes to the
+  // live feed. Returns 202 + { run_id } immediately (the run is spawned DETACHED
+  // and outlives the request); a second concurrent run → 409 (lockfile, R1).
+  // dry_run (default false) → a safe preview (brief + cursor only, no spend).
+  app.post("/api/generate", async (c) => {
+    if (!generateConfig) {
+      return c.json({ error: "generation not configured on this server" }, 501);
+    }
+    let raw: unknown;
+    try {
+      // An empty body is allowed (defaults: daily, not dry).
+      const text = await c.req.text();
+      raw = text.trim() ? JSON.parse(text) : undefined;
+    } catch {
+      return c.json({ error: "body must be JSON" }, 400);
+    }
+    const parsed = parseGenerateBody(raw);
+    if ("error" in parsed) return c.json({ error: parsed.error }, 400);
+
+    const result = await startGeneration(parsed, generateConfig);
+    if (!result.ok) {
+      // A run is already in progress — reject (spec R1: reject, not queue).
+      return c.json(
+        { error: "a generation run is already in progress", pid: result.pid },
+        409,
+      );
+    }
+    return c.json(
+      { run_id: result.run_id, mode: parsed.mode ?? "daily", dry_run: parsed.dry_run ?? false },
+      202,
+    );
+  });
+
+  // GET /api/generate/:run_id — poll a run's status off index/runs/<run_id>/.
+  app.get("/api/generate/:run_id", async (c) => {
+    if (!generateConfig) {
+      return c.json({ error: "generation not configured on this server" }, 501);
+    }
+    const status = await readRunStatus(c.req.param("run_id"), generateConfig);
+    if (status.status === "unknown") return c.json({ error: "run not found" }, 404);
+    return c.json(status);
   });
 
   app.get("/api/cards", async (c) => {

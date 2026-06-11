@@ -82,7 +82,7 @@ function usage(): never {
       "[--mode daily|backfill] [--since 14d|YYYY-MM-DD] [--dry-run] [--no-generate] " +
       "[--model M] [--skip-index] " +
       "[--index-path PATH] [--ledger PATH] [--artifacts-dir DIR] " +
-      "[--preferences PATH] [--runs-dir DIR] [--run-log PATH] [--recency-limit N]",
+      "[--preferences PATH] [--runs-dir DIR] [--run-log PATH] [--recency-limit N] [--run-id ID]",
   );
   process.exit(2);
 }
@@ -100,6 +100,7 @@ let preferencesPath = "PREFERENCES.md";
 let runsDir = "index/runs";
 let runLogPath = "index/run-log.jsonl";
 let recencyLimit: number | undefined;
+let runIdArg: string | undefined;
 
 const args = process.argv.slice(2);
 function takeValue(i: number): string {
@@ -158,6 +159,12 @@ for (let i = 0; i < args.length; i++) {
       recencyLimit = n;
       break;
     }
+    case "--run-id":
+      // Caller-supplied run id (the Generate button picks it so its status
+      // endpoint can find index/runs/<run-id>/ before the run finishes). When
+      // unset, defaults to the start timestamp below.
+      runIdArg = takeValue(++i);
+      break;
     case "--help":
     case "-h":
       usage();
@@ -171,7 +178,7 @@ for (let i = 0; i < args.length; i++) {
 // ---------------------------------------------------------------------------
 
 const now = new Date();
-const runId = now.toISOString();
+const runId = runIdArg ?? now.toISOString();
 const cap = capForMode(mode);
 if (mode === "backfill") {
   // TODO(PR6): full backfill = no recency window, novelty-ranked batches with a

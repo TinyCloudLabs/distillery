@@ -55,7 +55,7 @@ function firstParagraph(text: string): string {
 
 /* ---- glyphs: 1.6px-stroke outline icons in currentColor ---- */
 
-type GlyphName = FeedbackAction | "play" | "pause" | "sliders" | "arrow" | "back";
+type GlyphName = FeedbackAction | "play" | "pause" | "sliders" | "arrow" | "back" | "spark";
 
 export function Glyph({ name, size = 17 }: { name: GlyphName; size?: number }) {
   const paths: Record<GlyphName, ReactNode> = {
@@ -70,6 +70,7 @@ export function Glyph({ name, size = 17 }: { name: GlyphName; size?: number }) {
     sliders: <path d="M4 7h10M18 7h2M16 4.8v4.4M4 17h2M10 17h10M8 14.8v4.4" />,
     arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
     back: <path d="M19 12H5M11 18l-6-6 6-6" />,
+    spark: <path d="M12 3.5l1.8 5.2 5.2 1.8-5.2 1.8L12 17.5l-1.8-5.2L5 10.5l5.2-1.8L12 3.5zM18.5 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" />,
   };
   return (
     <svg

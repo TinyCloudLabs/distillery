@@ -393,6 +393,25 @@ describe("feed-run CLI (e2e, synthetic corpus)", () => {
     expect(brief).toContain("# Feed-run brief");
   });
 
+  test("--run-id is honored (the Generate button picks the id; orchestrator writes that dir)", async () => {
+    const runId = "2026-06-11T07:00:00.000Z";
+    const { status } = runCli(ctx, ["--dry-run", "--since", "2026-06-07", "--run-id", runId]);
+    expect(status).toBe(0);
+
+    // The run-log carries the caller's id (not a fresh timestamp).
+    const logs = await readRunLog(ctx);
+    expect(logs.length).toBe(1);
+    expect(logs[0]!.run_id).toBe(runId);
+
+    // And the per-run dir is named off that id (colons → dashes) — exactly what
+    // the Generate button's status endpoint reads (index/runs/<run-id>/).
+    const brief = await readFile(
+      join(ctx.runsDir, runId.replace(/[:]/g, "-"), "run-brief.md"),
+      "utf8",
+    );
+    expect(brief).toContain("# Feed-run brief");
+  });
+
   test("distill failure degrades — run continues with existing PREFERENCES.md", async () => {
     // Point the distill step at a stub script that exits non-zero.
     const failStub = join(ctx.dir, "fail-distill.ts");

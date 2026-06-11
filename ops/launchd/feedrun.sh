@@ -92,12 +92,20 @@ SINCE_NOTE=""
 
 echo "[feedrun] $(date -u +%Y-%m-%dT%H:%M:%SZ) starting mode=$MODE model=$MODEL dry_run=$DRY_RUN repo=$REPO" >&2
 
+# The Generate button picks a run id so its status endpoint can find
+# index/runs/<run-id>/ before the run finishes. Thread it through both paths.
+RUN_ID_ARG=()
+if [[ -n "${FEEDRUN_RUN_ID:-}" ]]; then
+  RUN_ID_ARG=(--run-id "$FEEDRUN_RUN_ID")
+fi
+
 if [[ "$DRY_RUN" == "1" ]]; then
   # Direct orchestrator run: brief + cursor only, no model calls, no publish.
   # --skip-index lets the preview run off the existing index without re-walking
   # the corpus (and without needing TRANSCRIPT_DIRS).
   bun skills/feed-run/scripts/feed-run.ts \
     --mode "$MODE" --no-generate --skip-index \
+    "${RUN_ID_ARG[@]}" \
     ${FEEDRUN_SINCE:+--since "$FEEDRUN_SINCE"}
 else
   # Full headless run. The system prompt fully overrides the default (clean

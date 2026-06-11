@@ -119,6 +119,37 @@ button {
   cursor: default;
 }
 
+/* Generate affordance — the on-demand feed-run trigger (spec §8). Inherits the
+   quiet-link hairline; while a run is live it loses the rule and the label
+   breathes (accent text + a hairline spinner). Quiet/premium, not buttony. */
+.gen-control {
+  white-space: nowrap;
+}
+.gen-control.gen-busy {
+  color: var(--accent);
+  border-bottom-color: transparent;
+  cursor: progress;
+}
+.gen-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--hairline);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: gen-spin 720ms linear infinite;
+}
+@keyframes gen-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gen-spinner {
+    animation-duration: 2400ms;
+  }
+}
+
 /* mono micro-affordance (active tag chip, etc.) */
 .mono-chip {
   position: relative;

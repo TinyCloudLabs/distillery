@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CardsResponse, FeedCard } from "../../src/types.ts";
 import { Card, FullCard, Glyph } from "./Card.tsx";
 import { PreferencesPanel } from "./Preferences.tsx";
+import { GenerateControl } from "./Generate.tsx";
 
 const PAGE_SIZE = 20;
 const UNDO_MS = 8000;
@@ -238,6 +239,7 @@ function Feed({
           <a className="quiet-link" href="#/preferences">
             <Glyph name="sliders" size={14} /> Preferences
           </a>
+          <GenerateControl onComplete={() => void refresh()} />
           <button
             type="button"
             className="quiet-link"
