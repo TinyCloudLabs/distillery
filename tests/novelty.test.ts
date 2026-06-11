@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  collectQuantityMentions,
   extractQuantities,
+  extractTranscriptTerms,
   findSingleVoiceTopics,
   priorArtifactIndex,
   trackQuantities,
@@ -337,5 +339,54 @@ describe("priorArtifactIndex", () => {
     const index = await priorArtifactIndex(join(dir, "does-not-exist"));
     expect(index.entries).toEqual([]);
     expect(index.warnings).toEqual([]);
+  });
+});
+
+describe("shared per-transcript extractors (index ↔ scan agree)", () => {
+  test("extractTranscriptTerms splits entities vs domain terms, filters names", () => {
+    const t = parseTranscript(
+      `# Sync\n**Date:** 2026-06-08\n\n## Transcript\n\n` +
+        `**Ada Lovelace:**\nWe ship OpenKey permissioning before the Flashbots rollout.\n\n` +
+        `**Grace Hopper:**\nThe permissioning model needs another rollout review.\n`,
+      "/tmp/sync.md",
+    );
+    const { entities, terms } = extractTranscriptTerms(t);
+    // Capitalized multi-token/mid-sentence entities surface as entities.
+    expect(entities.some((e) => e === "OpenKey" || e === "Flashbots")).toBe(true);
+    // Lowercase domain words surface as terms (stopword-filtered).
+    expect(terms).toContain("permissioning");
+    expect(terms).toContain("rollout");
+    // Speaker names never leak into entities/terms.
+    const flat = [...entities, ...terms].map((s) => s.toLowerCase());
+    expect(flat).not.toContain("ada");
+    expect(flat).not.toContain("grace");
+  });
+
+  test("empty transcript yields no entities/terms/quantities via the caller", () => {
+    const t = parseTranscript(
+      `# 2026-06-07 15:05:32\n**Date:** 2026-06-07\n\n## Transcript\n\n_(No transcript segments available.)_\n`,
+      "/tmp/empty.md",
+    );
+    // extractTranscriptTerms over zero spoken turns is empty.
+    const { entities, terms } = extractTranscriptTerms(t);
+    expect(entities).toEqual([]);
+    expect(terms).toEqual([]);
+    expect(collectQuantityMentions(t)).toEqual([]);
+  });
+
+  test("collectQuantityMentions carries kind/value/context/provenance", () => {
+    const t = parseTranscript(
+      `# Money\n**Date:** 2026-06-08\n\n## Transcript\n\n` +
+        `**Ada (12:56):**\nWe close the round at $100k by Friday, that's 20% done.\n`,
+      "/tmp/money.md",
+    );
+    const ms = collectQuantityMentions(t);
+    const money = ms.find((m) => m.kind === "money");
+    expect(money?.value).toContain("$100k");
+    expect(money?.speaker).toBe("Ada");
+    expect(money?.timestamp).toBe("12:56");
+    expect(money?.context.length).toBeGreaterThan(0);
+    expect(ms.some((m) => m.kind === "percent")).toBe(true);
+    expect(ms.some((m) => m.kind === "deadline")).toBe(true);
   });
 });

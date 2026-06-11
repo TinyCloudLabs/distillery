@@ -192,25 +192,34 @@ function chronoCompare(a: QuantityMention, b: QuantityMention): number {
  * orders every group chronologically. Groups spanning 2+ transcripts are the
  * drift candidates; the agent judges whether the delta is real drift.
  */
-export function trackQuantities(transcripts: Transcript[]): QuantityTrack {
+/**
+ * Build the raw quantity mentions (money/percent/count/deadline with context +
+ * provenance) for one transcript's spoken turns. Shared by `trackQuantities`
+ * (cross-corpus clustering) and `index-corpus` (per-transcript records), so
+ * the index and the scan extract the same quantities.
+ */
+export function collectQuantityMentions(t: Transcript): QuantityMention[] {
   const mentions: QuantityMention[] = [];
-  for (const t of transcripts) {
-    for (const [turnIndex, turn] of t.turns.entries()) {
-      for (const raw of extractQuantities(turn.text)) {
-        mentions.push({
-          transcript: t.path,
-          date: t.date,
-          speaker: turn.speaker,
-          timestamp: turn.timestamp,
-          turnIndex,
-          kind: raw.kind,
-          value: raw.value,
-          context: wordWindow(turn.text, raw.start, raw.end, CONTEXT_WORDS),
-          topicTerms: topicTermsFrom(wordWindow(turn.text, raw.start, raw.end, TOPIC_WORDS)),
-        });
-      }
+  for (const [turnIndex, turn] of t.turns.entries()) {
+    for (const raw of extractQuantities(turn.text)) {
+      mentions.push({
+        transcript: t.path,
+        date: t.date,
+        speaker: turn.speaker,
+        timestamp: turn.timestamp,
+        turnIndex,
+        kind: raw.kind,
+        value: raw.value,
+        context: wordWindow(turn.text, raw.start, raw.end, CONTEXT_WORDS),
+        topicTerms: topicTermsFrom(wordWindow(turn.text, raw.start, raw.end, TOPIC_WORDS)),
+      });
     }
   }
+  return mentions;
+}
+
+export function trackQuantities(transcripts: Transcript[]): QuantityTrack {
+  const mentions: QuantityMention[] = transcripts.flatMap(collectQuantityMentions);
 
   // Union-find clustering: same kind + >= MIN_SHARED_TOPIC_TERMS shared terms.
   const parent = mentions.map((_, i) => i);
@@ -340,6 +349,151 @@ interface TermSighting {
   entity: boolean;
 }
 
+/** One candidate token (entity phrase / mid-sentence cap word / domain term). */
+export interface TurnToken {
+  /** The matched text in its original casing. */
+  display: string;
+  start: number;
+  end: number;
+  /** True for capitalized entities, false for lowercase domain words. */
+  entity: boolean;
+}
+
+/**
+ * Enumerate the entity/term candidates in a single turn's text — the SHARED
+ * token extraction that both `findSingleVoiceTopics` (asymmetric-knowledge
+ * candidates) and `index-corpus` (per-transcript entities/terms) use, so the
+ * index and the scan agree on what counts as an entity vs. a domain term.
+ *
+ * Yields, in source order: capitalized multi-word phrases (leading
+ * sentence-initial stopwords stripped) and mid-sentence single capitalized
+ * words as `entity: true`; stopword-filtered lowercase domain words as
+ * `entity: false`. De-duplication and speaker/name filtering are the caller's
+ * job — this only surfaces the raw candidates from the regexes.
+ */
+export function enumerateTurnTokens(text: string): TurnToken[] {
+  const tokens: TurnToken[] = [];
+  for (const m of text.matchAll(CAP_PHRASE_RE)) {
+    // Strip leading capitalized stopwords ("The", "But", "I") that only
+    // joined the phrase because they started a sentence.
+    let phrase = m[0];
+    let start = m.index;
+    for (;;) {
+      const first = /^(\S+)\s+/.exec(phrase);
+      if (!first) break;
+      const w = first[1]!.toLowerCase();
+      if (!STOPWORDS.has(w) && w.length >= 2) break;
+      phrase = phrase.slice(first[0].length);
+      start += first[0].length;
+    }
+    // A 1-word remainder is handled by CAP_SINGLE_RE (let one path own singles).
+    if (phrase.includes(" ")) tokens.push({ display: phrase, start, end: start + phrase.length, entity: true });
+  }
+  for (const m of text.matchAll(CAP_SINGLE_RE)) {
+    const word = m[2]!;
+    const start = m.index + m[1]!.length;
+    tokens.push({ display: word, start, end: start + word.length, entity: true });
+  }
+  for (const m of text.toLowerCase().matchAll(TERM_RE)) {
+    if (STOPWORDS.has(m[0])) continue;
+    tokens.push({ display: text.slice(m.index, m.index + m[0].length), start: m.index, end: m.index + m[0].length, entity: false });
+  }
+  return tokens;
+}
+
+/**
+ * Words that are part of any speaker label or participant email across the
+ * given transcripts — a person's own name is not a content entity/term. Shared
+ * by `findSingleVoiceTopics` (cross-corpus) and `extractTranscriptTerms`
+ * (per-transcript, so the local names are filtered from that transcript's
+ * entities/terms).
+ */
+export function collectNameWords(transcripts: Transcript[]): Set<string> {
+  const nameWords = new Set<string>();
+  for (const t of transcripts) {
+    for (const turn of t.turns) {
+      for (const w of (turn.speaker ?? "").toLowerCase().split(/\s+/)) {
+        if (w) nameWords.add(w);
+      }
+    }
+    for (const p of t.participants ?? []) {
+      const local = p.split("@")[0] ?? "";
+      for (const w of local.toLowerCase().split(/[._-]+/)) if (w) nameWords.add(w);
+    }
+  }
+  return nameWords;
+}
+
+export interface TranscriptTerms {
+  /** Capitalized entity phrases/words, original casing, frequency-ranked. */
+  entities: string[];
+  /** Lowercase stopword-filtered domain words, frequency-ranked. */
+  terms: string[];
+}
+
+export interface TranscriptTermsOptions {
+  /** Cap on entities returned (default 60). */
+  maxEntities?: number;
+  /** Cap on terms returned (default 60). */
+  maxTerms?: number;
+}
+
+/**
+ * Per-transcript entities + domain terms for the corpus index. Uses the SAME
+ * `enumerateTurnTokens` extraction as `findSingleVoiceTopics`, so the index's
+ * entity/term classification agrees with the novelty scan's (§2 step 4). Only
+ * spoken turns are mined (a turn must have a speaker — Fireflies' AI summary
+ * blocks are not speech); a transcript's own speaker/participant names are
+ * filtered out. Output is de-duplicated by lowercased key and ranked by
+ * frequency (then alphabetically), keeping the most common original casing.
+ */
+export function extractTranscriptTerms(
+  transcript: Transcript,
+  opts: TranscriptTermsOptions = {},
+): TranscriptTerms {
+  const maxEntities = opts.maxEntities ?? 60;
+  const maxTerms = opts.maxTerms ?? 60;
+  const nameWords = collectNameWords([transcript]);
+
+  interface Agg {
+    entity: boolean;
+    count: number;
+    displays: Map<string, number>;
+  }
+  const agg = new Map<string, Agg>();
+  for (const turn of transcript.turns) {
+    if (!turn.speaker) continue;
+    const seenInTurn = new Set<string>();
+    for (const tok of enumerateTurnTokens(turn.text)) {
+      const key = tok.display.toLowerCase();
+      if (key.length < 3) continue;
+      if (STOPWORDS.has(key)) continue;
+      if (key.split(/\s+/).some((w) => nameWords.has(w))) continue;
+      if (seenInTurn.has(key)) continue; // one mention per turn per term
+      seenInTurn.add(key);
+      const a = agg.get(key) ?? { entity: tok.entity, count: 0, displays: new Map() };
+      a.count += 1;
+      a.entity ||= tok.entity;
+      a.displays.set(tok.display, (a.displays.get(tok.display) ?? 0) + 1);
+      agg.set(key, a);
+    }
+  }
+
+  const bestDisplay = (a: Agg): string =>
+    [...a.displays.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0]![0];
+  const rank = (predicate: (a: Agg) => boolean, max: number): string[] =>
+    [...agg.entries()]
+      .filter(([, a]) => predicate(a))
+      .sort(([ka, a], [kb, b]) => b.count - a.count || ka.localeCompare(kb))
+      .slice(0, max)
+      .map(([, a]) => bestDisplay(a));
+
+  return {
+    entities: rank((a) => a.entity, maxEntities),
+    terms: rank((a) => !a.entity, maxTerms),
+  };
+}
+
 /**
  * Find terms/entities that exactly ONE speaker uses across the whole corpus
  * — asymmetric-knowledge candidates. Candidates are capitalized
@@ -359,18 +513,7 @@ export function findSingleVoiceTopics(
 
   // Words that are part of any speaker label or participant email — a name
   // mentioned only by one person is not asymmetric knowledge.
-  const nameWords = new Set<string>();
-  for (const t of transcripts) {
-    for (const turn of t.turns) {
-      for (const w of (turn.speaker ?? "").toLowerCase().split(/\s+/)) {
-        if (w) nameWords.add(w);
-      }
-    }
-    for (const p of t.participants ?? []) {
-      const local = p.split("@")[0] ?? "";
-      for (const w of local.toLowerCase().split(/[._-]+/)) if (w) nameWords.add(w);
-    }
-  }
+  const nameWords = collectNameWords(transcripts);
 
   const sightings = new Map<string, TermSighting[]>();
   const add = (key: string, s: TermSighting) => {
@@ -402,33 +545,10 @@ export function findSingleVoiceTopics(
         });
       };
 
-      for (const m of turn.text.matchAll(CAP_PHRASE_RE)) {
-        // Strip leading capitalized stopwords ("The", "But", "I") that only
-        // joined the phrase because they started a sentence.
-        let phrase = m[0];
-        let start = m.index;
-        for (;;) {
-          const first = /^(\S+)\s+/.exec(phrase);
-          if (!first) break;
-          const w = first[1]!.toLowerCase();
-          if (!STOPWORDS.has(w) && w.length >= 2) break;
-          phrase = phrase.slice(first[0].length);
-          start += first[0].length;
-        }
-        if (phrase.includes(" ")) {
-          record(phrase, start, start + phrase.length, true);
-        }
-        // A 1-word remainder is handled by CAP_SINGLE_RE (it is mid-sentence
-        // by construction here, but let one code path own singles).
-      }
-      for (const m of turn.text.matchAll(CAP_SINGLE_RE)) {
-        const word = m[2]!;
-        const start = m.index + m[1]!.length;
-        record(word, start, start + word.length, true);
-      }
-      for (const m of turn.text.toLowerCase().matchAll(TERM_RE)) {
-        if (STOPWORDS.has(m[0])) continue;
-        record(turn.text.slice(m.index, m.index + m[0].length), m.index, m.index + m[0].length, false);
+      // Shared token extraction (same helper index-corpus uses, so the index
+      // and the scan agree on entity-vs-term classification).
+      for (const tok of enumerateTurnTokens(turn.text)) {
+        record(tok.display, tok.start, tok.end, tok.entity);
       }
     }
   }
