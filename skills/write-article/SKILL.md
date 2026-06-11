@@ -36,11 +36,19 @@ script in this skill calls a model. Any agent that can run bun can use it.
 Run all commands from the distillery repo root. Quality beats quantity at
 every step: one good article, or none.
 
-### 1. Survey (script)
+### 1. Survey (scripts)
 
 ```sh
 bun skills/write-article/scripts/survey.ts <transcript-path>... [--max-chunk 8000] [--format json|md] [--out digest.json]
+bun skills/_shared/scripts/novelty-scan.ts <transcript-path>... --format md [--out novelty.md]
 ```
+
+**Run the novelty scan alongside the survey — always.** It surfaces
+novelty CANDIDATES you judge in step 2: quantified-claim drift across
+transcripts (chronological evidence), single-voice topics (terms only one
+speaker uses, with engagement signals), and the prior-artifact baseline
+(what `artifacts/` already surfaced — pass `--artifacts-dir` if it lives
+elsewhere).
 
 Emits a digest: `mode` ("single" | "collection"), per-transcript metadata
 (title, date, participants, summary, per-speaker turn counts in
@@ -62,6 +70,15 @@ Pick the single strongest angle the material supports:
 - a topic that genuinely recurs across transcripts (collection mode only)
 - asymmetric knowledge: something one person knows that others keep asking
   about — name the person, show the questions
+
+**The angle MUST be built from at least one novelty candidate:** a
+quantified-drift finding, a single-voice topic, or a cross-transcript
+connection no single speaker stated. The readers attended these meetings —
+an "interesting summary of what was said" is explicitly disqualified as a
+lead. **Novelty baseline check:** if a prior artifact (see the scan's
+baseline section) already surfaced the angle, it's disqualified unless you
+can say something materially new about it — justify that judgment in
+`quality.notes`.
 
 The bar: **would a smart team member who attended none of these meetings
 learn something non-obvious?** If no angle clears that bar, stop here and
@@ -165,6 +182,15 @@ If the draft fails criterion 1 after one honest rewrite, discard the whole
 article — back to step 2 or output nothing. Record the verdict in
 `quality.notes` (what was cut, what was rewritten, or why nothing
 shipped). Set `quality.critic_pass: true` only on a survivor.
+
+**Then the adversarial novelty critic (mandatory, before saving):** argue
+that the team already knows everything in this draft — every beat was
+plainly stated in a meeting they attended, or surfaced by a prior
+artifact. If the argument holds for the LEAD, kill the article (zero
+artifacts is valid). If it holds for individual beats, cut them. Record
+the verdict in `quality.notes` with the novelty convention, e.g.
+`[novelty] lead=single-voice: ...; adversarial critic: ...` (`lead=` one
+of `quantified-drift` | `single-voice` | `cross-transcript`).
 
 ### 6. Verify quotes (script — must exit 0)
 

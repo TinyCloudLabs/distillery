@@ -137,6 +137,42 @@ Requirements every skill's SKILL.md must enforce:
    fails validation, so quality state is always inspectable downstream
    (the feed UI can badge or filter on it).
 
+#### Novelty architecture
+
+Artifacts must surface synthesis the attendee couldn't do in the room —
+the consumer ATTENDED the source meetings, so a well-executed summary is
+a failed artifact. Same division of labor as everything else: scripts
+deterministically SURFACE candidates, the agent JUDGES (no LLM calls in
+scripts). `_shared/lib/novelty.ts` + the `novelty-scan.ts` CLI provide
+three analyzers, run alongside every skill's survey step:
+
+1. **Quantified-claim drift** (`trackQuantities`): money / percent /
+   count-with-unit / deadline mentions extracted from spoken turns
+   (regexes grounded on real Fireflies speech: "$100k", "100 grand",
+   "3 to 5 million bucks", "20%", "by Friday"), with context + speaker /
+   transcript / timestamp provenance, grouped across transcripts by fuzzy
+   topic key and ordered chronologically. The script lines up the
+   evidence; whether "$100K to close" → "eventually" is drift is agent
+   judgment.
+2. **Single-voice topics** (`findSingleVoiceTopics`): capitalized
+   entities + stopword-filtered domain words that exactly ONE speaker uses
+   corpus-wide, with a per-mention engagement signal (substantive reply
+   within 3 turns) — asymmetric-knowledge candidates.
+3. **Prior-artifact baseline** (`priorArtifactIndex`): headlines / tags /
+   quotes / sources from `artifacts/*/*/artifact.json` (gitignored, read
+   at runtime) — what's already been surfaced. Candidate angles a prior
+   artifact covered are disqualified unless materially advanced.
+
+Workflow requirements (make-podcast is the primary statement; write-article
+and extract-insights mirror it): the lead MUST come from a
+quantified-drift finding, a single-voice topic, or a cross-transcript
+connection no single speaker stated — "interesting summary" is
+disqualified; and after the standard critic, an **adversarial novelty
+critic** argues the team already knows everything in the draft (plainly
+stated in an attended meeting, or in a prior artifact). Lead falls →
+kill the artifact (zero is valid); beats fall → cut them. Verdicts land
+in `quality.notes` under the `[novelty] lead=<type>: ...` convention.
+
 ### Gemini clients
 
 `_shared/lib/gemini.ts`:
@@ -198,6 +234,11 @@ Both resolve keys via `getSecret("GEMINI_API_KEY")` unless given one.
   cards, 1 article, 1 podcast generated from real corpus; TTS + image
   pipelines live-verified first-try; review.html + feed UI shipped;
   3 rounds of dogfood fixes applied.
+- **2026-06-11** Novelty mechanisms added — drift/single-voice/baseline
+  scripts (`novelty.ts` + `novelty-scan.ts`) + adversarial novelty critic
+  in every artifact skill; per Hunter: artifacts must surface synthesis
+  the attendee couldn't do in the room — a well-executed summary is a
+  failed artifact.
 
 ## Assumptions
 

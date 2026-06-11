@@ -20,15 +20,22 @@ drafting, critiquing). Any agent that can run bun can use this skill.
 
 Run all commands from the distillery repo root.
 
-### 1. Extract — parse + chunk (script)
+### 1. Extract — parse + chunk (scripts)
 
 ```sh
 bun skills/extract-insights/scripts/extract.ts <transcript-path>... [--max-chunk 8000] [--out chunks.json]
+bun skills/_shared/scripts/novelty-scan.ts <transcript-path>... --format md [--out novelty.md]
 ```
 
 Accepts .md/.txt files or directories (recursed). Emits JSON:
 `{ transcripts: [{path, title, date, participants, summary?}], chunks: [{transcript, index, speakers, text}] }`.
 Without `--out` it prints to stdout.
+
+**Run the novelty scan alongside the extract — always.** It surfaces
+novelty CANDIDATES you judge in step 2: quantified-claim drift across
+transcripts, single-voice topics (with engagement signals), and the
+prior-artifact baseline — what `artifacts/` already surfaced (pass
+`--artifacts-dir` if it lives elsewhere).
 
 ### 2. Triage + draft (your judgment)
 
@@ -38,6 +45,14 @@ Read the chunks. Select only genuinely interesting material:
 - ideas worth developing further
 - topics that recur across transcripts (when given a collection)
 - knowledge only one person on the team seems to hold
+
+**Each card's lead MUST be built from at least one novelty candidate:** a
+quantified-drift finding, a single-voice topic, or a cross-transcript
+connection no single speaker stated. The team attended these meetings —
+an "interesting summary of what was said" is explicitly disqualified.
+**Novelty baseline check:** a candidate a prior artifact already surfaced
+is disqualified unless you can say something materially new about it —
+justify that judgment in `quality.notes`.
 
 For each candidate, draft an artifact JSON per the contract in
 `skills/_shared/lib/artifact.ts`: `type: "insight-card"`, a sharp
@@ -58,6 +73,15 @@ every claim anchored to a real quote? **Discard sub-bar candidates — fewer,
 better artifacts beats padded output. Zero artifacts is a valid result.**
 Set `quality.critic_pass: true` only on survivors, with `quality.notes`
 explaining what was cut and why.
+
+**Then the adversarial novelty critic (mandatory, before saving):** argue
+that the team already knows everything in each card — every beat was
+plainly stated in a meeting they attended, or surfaced by a prior
+artifact. If the argument holds for a card's lead, kill the card (zero
+cards is valid); if it holds for individual beats, cut them. Record the
+verdict in `quality.notes` with the novelty convention, e.g.
+`[novelty] lead=cross-transcript: ...; adversarial critic: ...` (`lead=`
+one of `quantified-drift` | `single-voice` | `cross-transcript`).
 
 ### 4. Verify quotes (script — mandatory before saving)
 
