@@ -47,11 +47,12 @@ no streaming.
 Run all commands from the distillery repo root. Use a scratch dir (e.g.
 `/tmp`) for intermediates; only `save.ts` writes into `artifacts/`.
 
-### 1. Digest + novelty scan (scripts)
+### 1. Digest + novelty scan + narrative-seed scan (scripts)
 
 ```sh
 bun skills/make-podcast/scripts/digest.ts <transcript-path>... [--max-chunk 8000] [--out digest.json]
 bun skills/_shared/scripts/novelty-scan.ts <transcript-path>... --format md [--out novelty.md]
+bun skills/make-podcast/scripts/narrative-seeds.ts <transcript-path>... --format md [--out seeds.md]
 ```
 
 The digest accepts .md/.txt files or directories (recursed) and emits
@@ -59,6 +60,34 @@ JSON: `{ transcripts: [{path, title, date, participants, duration,
 summary?}], chunks: [...] }`. `duration` is computed from the first/last
 turn timestamps when present (Fireflies headers sometimes lie with
 "Duration: 0 min"), falling back to the header value.
+
+**The narrative-seed scan is the podcast's material-format-matching gate
+— run it every time, BEFORE you pick a lead.** A card needs ONE insight;
+a podcast needs a sustained THROUGH-LINE across meetings — development,
+tension, a turn. That is a structurally higher bar, so the survey must
+PRIORITIZE material that already shows temporal development (a real
+before→after), not just any recent transcripts. `narrative-seeds.ts`
+scores the candidate SET deterministically (no LLM) on index-available
+signals and surfaces the **arc skeleton** — ranked seeds, each with its
+chronological evidence chain. Three seed kinds:
+
+- **quantified-drift** — a tracked quantity whose VALUE moved across 2+
+  meetings (a number/commitment that changed over time = an inherent arc:
+  "$100k to close" → "50 grand" → "eventually"). Identical values that
+  merely recur score zero — that's a fact the room shares, not a story.
+- **single-voice-arc** — a single-voice topic one person carries across
+  3+ meetings (an idea pushed over time; a shift in whether the room
+  engaged with it = stance development).
+- **cross-meeting-topic** — an entity/term spanning 3+ meetings with 2+
+  speakers (a sustained through-line the room kept returning to).
+
+Seeds are ranked by `development × reach`; **a set with a drifting
+quantity scores above a flat "here are interesting things" set by
+construction.** Every seed spans 2+ meetings — a signal confined to one
+meeting never appears (it's a card, not a lead). **The scan is a
+SURFACER, not a judge:** read each seed's evidence chain and decide
+whether the arc is real. **Zero seeds means no through-line shows temporal
+development — there is no episode lead** (do not synthesize a flat recap).
 
 **Run the novelty scan alongside the digest — always.** It surfaces three
 kinds of novelty CANDIDATES (deterministically; you judge them):
@@ -76,23 +105,37 @@ kinds of novelty CANDIDATES (deterministically; you judge them):
 
 ### 2. Pick ONE through-line (your judgment)
 
-Survey the digest + novelty scan and choose a single compelling
-through-line. One episode = one idea — do not stitch together a grab-bag
-recap.
+Survey the digest + novelty scan + **narrative-seed scan** and choose a
+single compelling through-line. One episode = one idea — do not stitch
+together a grab-bag recap.
 
-**The through-line MUST be built from at least one of:**
+**The through-line MUST be built on a narrative seed that has temporal
+development — a real before→after across meetings.** Start from the
+ranked seeds in the narrative-seed scan: the episode's spine is one seed
+whose evidence chain shows the story MOVING (a quantity that drifted, a
+single-voice idea pushed across meetings, a topic the room returned to
+with an evolving stance). Read the seed's chronological evidence chain and
+confirm the development is real before committing.
 
-1. a **quantified-drift finding** (a number/deadline that moved, softened,
-   or vanished across meetings — cite the chronological evidence),
-2. a **single-voice topic** (knowledge one person holds that the room
-   never engaged with — name the person, show the silence), or
-3. a **cross-transcript connection no single speaker stated** (two
-   meetings unknowingly answering each other's question, the same root
-   cause surfacing under different names).
+In seed terms, the through-line MUST be built from at least one of:
 
-**"Interesting summary of what was said" is explicitly disqualified as a
-lead.** If the through-line could be reconstructed by anyone who attended
-the meetings, it is not an episode.
+1. a **quantified-drift seed** (a number/deadline that moved, softened, or
+   vanished across meetings — cite the chronological evidence chain),
+2. a **single-voice-arc seed** (knowledge one person carries across
+   meetings that the room never engaged with — name the person, show the
+   silence and how it persisted), or
+3. a **cross-meeting-topic / cross-transcript connection no single speaker
+   stated** (a thread the room kept returning to with an evolving stance;
+   two meetings unknowingly answering each other's question; the same root
+   cause surfacing under different names across the set).
+
+**A flat "here are interesting things from recent meetings" is
+disqualified as a lead — that's a card, not an episode.** If the
+through-line is confined to one meeting, or could be reconstructed by
+anyone who attended without lining up the across-meeting development, it
+is not an episode. **If the narrative-seed scan returns zero seeds (no
+through-line shows temporal development), output nothing** — see "Zero
+episodes is a valid result" below.
 
 **Novelty baseline check (mandatory).** Compare your candidate angle
 against the scan's prior-artifact baseline. If a prior artifact already
@@ -106,18 +149,59 @@ spend it on nothing rather than noise.
 
 ### 3. Write the script (your judgment)
 
-Write `script.md` — the exact text that will be spoken. Quality rules:
+Write `script.md` — the exact text that will be spoken. Good material only
+lands if the craft lands, so write to an explicit **craft rubric** and
+self-grade against it (the checklist below) before you touch the critic.
 
-- **Hook in the first two sentences.** Open inside the idea, not around it.
-- **Conversational, not corporate.** Written for the ear: short sentences,
-  contractions, no slideware language.
-- **Every factual claim traceable to the source transcripts.** If you can't
-  point at the line that supports it, cut it. Collect the anchoring
-  verbatim quotes now for `source_quotes` (step 4 verifies them).
-- **No filler.** No "welcome back to another episode...", no
-  "in today's fast-paced world", no outro fluff.
-- **End with one concrete takeaway** the listener can act on or repeat.
-- **Target 350–750 words** (~2–5 minutes at speaking pace).
+**Craft rubric — every episode must clear all six axes:**
+
+1. **COLD OPEN** — drop into the most surprising concrete moment, not an
+   intro. No "welcome to…", no "today we're talking about…". Open on the
+   specific thing that changed ("Three weeks ago this round needed a
+   hundred grand. Last Tuesday it was 'eventually.'").
+2. **ARC** — a clear shape: setup → the turn/tension → where it landed.
+   The seed's before→after IS the arc; make the listener feel the
+   movement, not a list of facts.
+3. **A TURN** — at least one earned moment where the story complicates: a
+   number softens, a stance flips, two meetings collide. The turn is why
+   it's an episode and not a card. Name it; don't bury it.
+4. **CONCRETE over abstract** — specific numbers, names, dates, the actual
+   words spoken. Cut every sentence that could appear in any episode about
+   any company. Every factual claim must trace to a source line (collect
+   the anchoring verbatim quotes now for `source_quotes`; step 4 verifies
+   them — if you can't point at the line, cut the claim).
+5. **DIALOGUE, not narration** (two-host format) — the hosts are in
+   genuine exchange: one ADVANCES the story, the other PROBES or PUSHES
+   BACK. Not two people alternating paragraphs of the same narration. A
+   real question, a real disagreement, a "wait, but…". (Monologue format:
+   skip this axis, but the single voice must still think out loud, not
+   recite.)
+6. **CLOSE on one concrete takeaway** — resolve to a single thing the
+   listener can act on or repeat. No outro fluff, no "in today's
+   fast-paced world", no recap of the recap.
+
+Plus the always-on basics: **conversational, not corporate** (written for
+the ear — short sentences, contractions, no slideware), **no filler**, and
+**target 350–750 words** (~2–5 minutes at speaking pace).
+
+**Self-grade checklist (run BEFORE the critic — this is mandatory).**
+Grade the draft on each axis; weak on ANY axis → revise the script, don't
+proceed:
+
+- [ ] **Cold open** — does it drop into the most surprising concrete
+      moment, not an intro?
+- [ ] **Arc** — is there a clear setup → turn → landing, not a list?
+- [ ] **Turn** — is there at least one earned moment where the story
+      complicates?
+- [ ] **Dialogue not narration** — do the two hosts genuinely
+      advance/probe each other (or, monologue: think out loud)?
+- [ ] **Concrete** — specifics (numbers, names, the actual words) over
+      abstraction throughout?
+- [ ] **Takeaway** — does it close on ONE concrete thing to act on or
+      repeat?
+
+Only a draft that passes all six goes to step 4. The self-grade is craft;
+the critics in steps 4–5 are correctness + novelty — both still run.
 
 Formats — the file content is sent to TTS verbatim:
 
@@ -184,7 +268,9 @@ the novelty note convention:
 [novelty] lead=quantified-drift: $100K-to-close (May 22) vs "eventually" (Jun 5); adversarial critic: cut beat 3 (restated standup status), lead survives — drift synthesis spans two meetings no attendee lined up.
 ```
 
-(`lead=` one of `quantified-drift` | `single-voice` | `cross-transcript`.)
+(`lead=` is the narrative-seed kind the through-line was built on: one of
+`quantified-drift` | `single-voice-arc` | `cross-meeting-topic`. The older
+`single-voice` / `cross-transcript` spellings remain acceptable synonyms.)
 
 ### 6. Synthesize (script — needs GEMINI_API_KEY)
 
