@@ -12,6 +12,7 @@
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
+    "@openkey/sdk": "^0.8.4",
     "hono": "^4.6.0",
     "marked": "^15.0.0",
     "react": "^19.0.0",

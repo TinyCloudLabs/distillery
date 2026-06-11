@@ -5,6 +5,7 @@
     "": {
       "name": "distillery-feed",
       "dependencies": {
+        "@openkey/sdk": "^0.8.4",
         "hono": "^4.6.0",
         "marked": "^15.0.0",
         "react": "^19.0.0",
@@ -120,6 +121,10 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@openkey/core": ["@openkey/core@0.8.5", "", {}, "sha512-v3QUIvfY3Tk5XQK5F3k1aeEDgBcJd+mD54enZSLZ+yrzhbQGg4WHwsBoDml7+VTi4mrmj1zfb1vZ/DS35Xqrnw=="],
+
+    "@openkey/sdk": ["@openkey/sdk@0.8.7", "", { "dependencies": { "@openkey/core": "^0.8.5" } }, "sha512-TCmQcX5eaP06ZY51HaivnhxNcm5gJlfpC16cp+ebVfIV1r4JQZk3mscZ6G8HeCF3f8AOZZcpJMXQ7jpS8gX2aQ=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-beta.27", "", {}, "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA=="],
 

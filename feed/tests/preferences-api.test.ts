@@ -25,10 +25,13 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "distillery-prefs-test-"));
   prefsPath = join(dir, "PREFERENCES.md");
   await writeFile(prefsPath, SAMPLE);
+  // auth disabled: this suite is about ETag/concurrency semantics — the gate
+  // itself (401 before any ETag logic) is covered in auth.test.ts.
   app = createApp({
     artifactsDir: fx.dir,
     feedbackFile: join(dir, "events.jsonl"),
     preferencesFile: prefsPath,
+    auth: { disabled: true },
   });
 });
 
@@ -69,6 +72,7 @@ describe("GET /api/preferences", () => {
       artifactsDir: fx.dir,
       feedbackFile: join(dir, "events.jsonl"),
       preferencesFile: join(dir, "DOES_NOT_EXIST.md"),
+      auth: { disabled: true },
     });
     const res = await ghost.request("/api/preferences");
     expect(res.status).toBe(200);
@@ -81,6 +85,7 @@ describe("GET /api/preferences", () => {
     const bare = createApp({
       artifactsDir: fx.dir,
       feedbackFile: join(dir, "events.jsonl"),
+      auth: { disabled: true },
     });
     expect((await bare.request("/api/preferences")).status).toBe(404);
   });
@@ -179,6 +184,7 @@ describe("PUT /api/preferences", () => {
       artifactsDir: fx.dir,
       feedbackFile: join(dir, "events.jsonl"),
       preferencesFile: ghostPath,
+      auth: { disabled: true },
     });
     const res = await ghost.request("/api/preferences", {
       method: "PUT",
@@ -193,6 +199,7 @@ describe("PUT /api/preferences", () => {
     const bare = createApp({
       artifactsDir: fx.dir,
       feedbackFile: join(dir, "events.jsonl"),
+      auth: { disabled: true },
     });
     const res = await bare.request("/api/preferences", { method: "PUT", body: "hi" });
     expect(res.status).toBe(404);
