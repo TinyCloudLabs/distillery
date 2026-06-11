@@ -24,7 +24,9 @@ recipe is just a prompt + scripts — nothing couples it to one agent.
 
 - bun installed.
 - `$TRANSCRIPT_DIRS` exported (comma-separated absolute dirs) so `index-corpus`
-  can find the corpus. Nothing is hardcoded — same rule as the base SPEC.
+  can find the corpus. Nothing is hardcoded — same rule as the base SPEC. (Not
+  required with `--skip-index`, which reuses the already-built index — handy for
+  a `--dry-run` / Generate-button run that just wants a brief off the last index.)
 - `GEMINI_API_KEY` / `GOOGLE_AI_API_KEY` only for the generation media steps
   (TTS + images); index/query/distill/brief need no key.
 
@@ -39,6 +41,7 @@ bun skills/feed-run/scripts/feed-run.ts \
   [--since 14d|2026-06-01]     # recency lower bound (relative or absolute);
                                #   default = last run from ledger, else 7 days
   [--dry-run]                  # stop after the brief (no generation) — the safe default for a first look
+  [--skip-index]               # reuse the existing index (no re-index, no $TRANSCRIPT_DIRS needed)
   [--index-path index/corpus-index.json] [--ledger index/surfaced.json]
   [--artifacts-dir artifacts] [--preferences PREFERENCES.md]
   [--runs-dir index/runs] [--run-log index/run-log.jsonl] [--recency-limit N]
@@ -49,10 +52,10 @@ bun skills/feed-run/scripts/feed-run.ts \
 | 1. INDEX | `index-corpus --prune` (fresh, incremental index) | orchestrator |
 | 2. DISTILL | `distill-preferences` aggregation, BEFORE generation ([D4]) | orchestrator (aggregation) + you (PREFERENCES.md edits) |
 | 3a. QUERY recency | `query-corpus --since <since> --unsurfaced-only` | orchestrator |
-| 3b. QUERY deep-dive | one high-novelty, never-surfaced older thread past the cursor; advance cursor | orchestrator |
+| 3b. QUERY deep-dive | one high-novelty, never-surfaced older thread past the cursor (ranked by the novelty proxy); advance **and persist** the cursor | orchestrator |
 | 4. BRIEF | render `run-brief.md` (titles + paths + preferences + baseline + cap) | orchestrator |
 | 5. GENERATE + CRITIC | run the generation skills against the brief, each with its own novelty-scan + adversarial critic | **you** |
-| 6. SAVE / PUBLISH | `save.ts` writes survivors to `artifacts/`; append to `surfaced.json`; persist cursor | **you** |
+| 6. SAVE / PUBLISH | `save.ts` writes survivors to `artifacts/`; append surfaced ENTRIES to `surfaced.json` (the cursor is already persisted by step 3b) | **you** |
 
 The orchestrator writes a per-run dir `index/runs/<ts>/` containing
 `run-brief.md` + `run-log.json`, and appends a one-liner to
@@ -82,17 +85,21 @@ the run-log records.
 3. **Publish** survivors with `save.ts` (auto-publish straight to `artifacts/`,
    [D3] — the feed reads it live). One hero image per artifact (`MAX_ILLUSTRATE`
    = artifacts published).
-4. **Write the ledger back** so the deep-dive / backfill don't re-chew these
-   threads. For every transcript you EXAMINED (shipped or not), append a
-   `surfaced.json` entry and persist the advanced cursor. The cursor was already
-   advanced by the orchestrator's query step and recorded in the run-log; mirror
-   it into the ledger you write. Use the helpers:
+4. **Write the surfaced ENTRIES back** so the deep-dive / backfill don't
+   re-chew these threads. For every transcript you EXAMINED (shipped or not),
+   append a `surfaced.json` entry. **You do NOT touch the deep-dive cursor** —
+   the orchestrator already advanced AND PERSISTED it (its `save` step writes
+   `surfaced.json` with the cursor moved onto the picked thread; see the
+   run-log). Re-read the ledger before appending so you build on the
+   orchestrator's persisted cursor instead of clobbering it. Use the helpers:
 
    ```ts
    import { readLedger, writeLedger, appendSurfaced }
      from "skills/query-corpus/scripts/surfaced-ledger.ts";
    import { topicKeysFor, ledgerMode }
      from "skills/feed-run/scripts/feed-run-lib.ts";
+   // Re-read so we keep the orchestrator's already-advanced cursor:
+   let ledger = await readLedger("index/surfaced.json");
    // for each examined record `rec` with outcome "shipped" | "examined-no-ship":
    ledger = appendSurfaced(ledger, {
      path: rec.path,
@@ -102,19 +109,31 @@ the run-log records.
      mode: ledgerMode("daily", isDeepDive ? "deepdive" : "recency"),
      content_hash: rec.content_hash,  // R3: re-eligibility on later edits
    });
-   await writeLedger("index/surfaced.json", { ...ledger, deepdive_cursor: { last_path: deepDivePath } });
+   // Append ENTRIES ONLY — never reconstruct deepdive_cursor (the orchestrator
+   // owns it; reconstructing from deepDivePath risks clobbering it with undefined).
+   await writeLedger("index/surfaced.json", ledger);
    ```
 
 ## Deep-dive cursor (spec §5)
 
 The orchestrator builds the candidate set with `query-corpus --unsurfaced-only`
-over **all-but-recent** transcripts, ranks it by a deterministic novelty proxy
-(single-voice **entity count** + **drift-group membership** — quantity values
-recurring across 2+ transcripts — both computed from the index, no
-transcript re-reads), sorts it stably (date then path), and calls
-`advanceCursor`. The cursor advances exactly one transcript per run and
-**wraps** at the end. Wrapping never re-surfaces, because the candidate list is
-already `--unsurfaced-only` — a thread surfaced on a prior lap drops out.
+over **all-but-recent** transcripts, then **ranks it by the index-only novelty
+proxy** (single-voice **entity count** + **drift-group membership** — quantity
+values recurring across 2+ transcripts — both computed from the index, no
+transcript re-reads). **That novelty rank IS the cursor order**: novelty is the
+primary sort key, with date-desc then path as the deterministic tiebreak. The
+cursor walks the novelty order, so the deep-dive surfaces high-novelty old
+threads first rather than merely the oldest. It advances exactly one transcript
+per run and **wraps** at the end. Wrapping never re-surfaces, because the
+candidate list is already `--unsurfaced-only` — a thread surfaced on a prior lap
+drops out.
+
+The orchestrator **persists the advanced cursor itself** (its `save` step writes
+`surfaced.json` with `deepdive_cursor.last_path` moved onto the picked thread),
+EXCEPT under `--dry-run` (which reports the would-be advance but never mutates
+state). This guarantees the cursor moves even on a **zero-artifact run** — the
+same thread is never re-picked forever just because nothing shipped. The agent
+appends only surfaced ENTRIES afterward and must NOT reconstruct the cursor.
 
 ## Per-step failure degradation (spec §5)
 
@@ -127,7 +146,7 @@ The run never hard-fails on a single step:
 | QUERY recency | empty window → **deep-dive-only** run (not an error) |
 | QUERY deep-dive | no eligible older thread (all surfaced) → **recency-only** run |
 | GENERATE/CRITIC | a single skill failure drops that candidate, not the run; **zero artifacts is valid** |
-| SAVE | per-artifact: a failed save drops that artifact; the cursor only advances if the deep-dive transcript was actually examined |
+| SAVE | per-artifact: a failed save drops that artifact. The deep-dive cursor is persisted by the orchestrator the moment a candidate is picked (step 3b), independent of whether anything ships — so a zero-artifact run still rotates the cursor |
 
 Every step outcome (`ok` / `skipped` / `degraded` / `failed` / `aborted`)
 appends to the structured run-log so a failed/empty run is inspectable.
@@ -148,12 +167,15 @@ with `mode: "backfill"` — is **deferred to PR6** (noted as a TODO in the code)
 | DEEPDIVE_PER_RUN | (fixed) | 1 | older threads excavated per run ([D2]) |
 | MAX_ARTIFACTS_PER_RUN | mode | 3 (daily) / 25 (backfill) | cost guardrail; surfaced in the brief |
 | MAX_ILLUSTRATE | derived | = artifacts published | one hero image per artifact |
+| (reuse index) | `--skip-index` | off | reuse the existing index instead of re-indexing; lets `--dry-run` / the Generate button run without `$TRANSCRIPT_DIRS` |
 
 ## Consumers
 
 - **launchd cron** (spec §7, PR5): `ops/feed-run.sh` invokes `claude -p` against
   this SKILL.md; the orchestrator is the deterministic spine.
 - **Generate button** (spec §8, PR7): `POST /api/generate` spawns the same
-  wrapper; the UI polls `index/run-log.jsonl` for progress.
+  wrapper; the UI polls `index/run-log.jsonl` for progress. A dry-run preview
+  can pass `--skip-index --dry-run` to produce a brief off the existing index
+  without `$TRANSCRIPT_DIRS`.
 - **Hermes / other agents** (spec R4): can run the orchestrator + this runbook
   directly — agent-agnostic by construction.

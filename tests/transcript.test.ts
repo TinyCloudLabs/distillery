@@ -248,6 +248,83 @@ describe("parseTranscript — Soundcore adapter (spec §4)", () => {
   });
 });
 
+describe("parseTranscript — Soundcore PR#5 review regressions", () => {
+  // A minimal Soundcore-shaped file: WH-summary signature above ## Transcript so
+  // isSoundcore() routes it to parseSoundcore.
+  const wh = "## Summary\n\n**What**: pricing\n\n## Summary\n\n**What**: pricing again\n";
+
+  test("greedy inline-label guard: mid-turn **Note:** stays in body (one turn)", () => {
+    // Block-form **speaker1:** label opens a turn; the FOLLOWING body line
+    // starts with bold emphasis **Note:** — it must NOT become a phantom
+    // speaker. Reviewer's verified case (transcript.ts:298).
+    const raw =
+      `# Greedy Trap\n**Date:** 2026-06-09\n\n${wh}\n## Transcript\n\n` +
+      `**speaker1:**\n` +
+      `We should ship this.\n` +
+      `**Note:** the rest of speaker1's thought goes here.\n`;
+    const t = parseTranscript(raw);
+    // ONE turn, the real speaker, with the Note text retained in the body.
+    expect(t.turns).toHaveLength(1);
+    expect(t.turns[0]?.speaker).toBe("speaker1");
+    expect(t.turns.map((x) => x.speaker)).not.toContain("Note");
+    expect(t.turns[0]?.text).toContain("We should ship this.");
+    expect(t.turns[0]?.text).toContain("**Note:** the rest of speaker1's thought");
+  });
+
+  test("a genuinely speaker-shaped inline label still opens a turn mid-region", () => {
+    // Sanity: a distinct speaker label (speaker2 / a multi-token name) is NOT
+    // emphasis and should still split turns inline.
+    const raw =
+      `# Inline Speakers\n**Date:** 2026-06-09\n\n${wh}\n## Transcript\n\n` +
+      `**speaker1:** first thing\n` +
+      `**speaker2:** second thing\n`;
+    const t = parseTranscript(raw);
+    expect(t.turns).toHaveLength(2);
+    expect(t.turns.map((x) => x.speaker)).toEqual(["speaker1", "speaker2"]);
+  });
+
+  test("empty-sentinel does NOT wipe a file that has real turns + the sentinel", () => {
+    // A real **Sam:** turn followed by the sentinel string later in the body
+    // must parse to turns=1, empty=false (transcript.ts:133). The sentinel only
+    // flags empty when it is the SOLE content under ## Transcript.
+    const raw =
+      `# Sentinel Mixed\n**Date:** 2026-06-09\n\n${wh}\n## Transcript\n\n` +
+      `**Sam:**\n` +
+      `Here is a real spoken turn.\n` +
+      `We once saw _(No transcript segments available.)_ in another export.\n`;
+    const t = parseTranscript(raw);
+    expect(t.empty).toBeFalsy();
+    expect(t.turns).toHaveLength(1);
+    expect(t.turns[0]?.speaker).toBe("Sam");
+    expect(t.turns[0]?.text).toContain("Here is a real spoken turn.");
+  });
+
+  test("empty-sentinel still flags empty when it is the sole content", () => {
+    const raw = `# Empty\n**Date:** 2026-06-09\n\n## Transcript\n\n_(No transcript segments available.)_\n`;
+    const t = parseTranscript(raw);
+    expect(t.empty).toBe(true);
+    expect(t.turns).toHaveLength(0);
+  });
+
+  test("double ## Transcript heading: turns under the FIRST region are kept", () => {
+    // Two ## Transcript headings — splitting on the FINAL one would drop the
+    // first region's turns. Splitting on the FIRST keeps both (transcript.ts:267).
+    const raw =
+      `# Double Heading\n**Date:** 2026-06-09\n\n${wh}\n` +
+      `## Transcript\n\n` +
+      `**speaker1:**\n` +
+      `First region turn.\n\n` +
+      `## Transcript\n\n` +
+      `**speaker2:**\n` +
+      `Second region turn.\n`;
+    const t = parseTranscript(raw);
+    expect(t.turns).toHaveLength(2);
+    expect(t.turns.map((x) => x.speaker)).toEqual(["speaker1", "speaker2"]);
+    expect(t.turns[0]?.text).toContain("First region turn.");
+    expect(t.turns[1]?.text).toContain("Second region turn.");
+  });
+});
+
 describe("loadTranscripts", () => {
   test("walks directories recursively, picking only .md/.txt", async () => {
     const all = await loadTranscripts([FIXTURES]);

@@ -125,11 +125,40 @@ describe("deep-dive ranking (index-only novelty proxy)", () => {
     expect(ranked[ranked.length - 1]!.path).toBe("/d");
   });
 
-  test("orderedDeepDivePaths is stable date-desc then path (cursor order)", () => {
+  test("orderedDeepDivePaths preserves the ranked input order (novelty → cursor)", () => {
+    // orderedDeepDivePaths now returns the ALREADY-RANKED order verbatim (the
+    // cursor walks novelty order), so pass it the output of rankDeepDiveCandidates.
     const r1 = rec({ path: "/z", date: "2026-05-01" });
     const r2 = rec({ path: "/a", date: "2026-05-10" });
     const r3 = rec({ path: "/m", date: "2026-05-10" });
-    expect(orderedDeepDivePaths([r1, r2, r3])).toEqual(["/a", "/m", "/z"]);
+    const ranked = rankDeepDiveCandidates([r1, r2, r3]);
+    expect(orderedDeepDivePaths(ranked)).toEqual(ranked.map((r) => r.path));
+    // With equal novelty (all zero), the rank's date-desc-then-path tiebreak holds.
+    expect(orderedDeepDivePaths(ranked)).toEqual(["/a", "/m", "/z"]);
+  });
+
+  test("novelty rank drives cursor order: high-novelty old thread beats older-but-plain", () => {
+    // OLDER but high-novelty (many entities + drift) must come BEFORE a newer
+    // low-novelty thread — proving novelty, not date, is the primary key.
+    const novelOld = rec({
+      path: "/novel-old",
+      date: "2026-01-01",
+      entities: ["A", "B", "C", "D", "E"],
+      quantities: [{ kind: "money", value: "$1m", context: "c" }],
+    });
+    const drifty = rec({
+      path: "/drifty",
+      date: "2026-02-01",
+      entities: ["F"],
+      quantities: [{ kind: "money", value: "$1m", context: "c" }], // drift w/ novelOld
+    });
+    const plainNew = rec({ path: "/plain-new", date: "2026-05-01", entities: [], quantities: [] });
+    const ranked = rankDeepDiveCandidates([plainNew, drifty, novelOld]);
+    const order = orderedDeepDivePaths(ranked);
+    // novelOld (5 entities + 1 drift = 6) first; plainNew (0) last — date ignored.
+    expect(order[0]).toBe("/novel-old");
+    expect(order[order.length - 1]).toBe("/plain-new");
+    expect(order.indexOf("/novel-old")).toBeLessThan(order.indexOf("/plain-new"));
   });
 });
 
@@ -287,6 +316,16 @@ async function readRunLog(ctx: RunCtx): Promise<RunLog[]> {
     .map((l) => JSON.parse(l) as RunLog);
 }
 
+async function readLedgerFile(
+  ctx: RunCtx,
+): Promise<{ deepdive_cursor: { last_path?: string }; surfaced: unknown[] } | null> {
+  try {
+    return JSON.parse(await readFile(ctx.ledgerPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 describe("feed-run CLI (e2e, synthetic corpus)", () => {
   let ctx: RunCtx;
 
@@ -413,5 +452,116 @@ describe("feed-run CLI (e2e, synthetic corpus)", () => {
     const secondPick = logs[logs.length - 1]!.deepdive_path;
     expect(secondPick).toBeDefined();
     expect(secondPick).not.toBe(firstPick); // cursor advanced to a new thread
+  });
+
+  // ---- PR#5 review regressions ----
+
+  test("real (non-dry) run persists the advanced deep-dive cursor (orchestrator-owned)", async () => {
+    // No --dry-run: the orchestrator must persist the cursor ITSELF, so a later
+    // run resumes after it even though the agent (which would append surfaced
+    // entries) never ran here.
+    const { status } = runCli(ctx, ["--since", "2026-06-07"]);
+    expect(status).toBe(0);
+    const log = (await readRunLog(ctx))[0]!;
+    const picked = log.deepdive_path;
+    expect(picked).toBeDefined();
+    // The ledger file now exists with the cursor moved onto the picked thread.
+    const ledger = await readLedgerFile(ctx);
+    expect(ledger).not.toBeNull();
+    expect(ledger!.deepdive_cursor.last_path).toBe(picked);
+    // The orchestrator persisted ONLY the cursor — no surfaced entries (those
+    // are the agent's job after generation).
+    expect(ledger!.surfaced).toEqual([]);
+    // The "save" step reports the persisted advance.
+    const save = log.steps.find((s) => s.step === "save")!;
+    expect(save.status).toBe("ok");
+    expect(save.detail).toContain("cursor advanced");
+    expect(save.detail).toContain("persisted");
+  });
+
+  test("zero-deep-dive-artifact run still advances the cursor (no re-pick forever)", async () => {
+    // A real run that ships NOTHING (the orchestrator never generates) must
+    // still move the cursor off the picked thread, so the next real run picks a
+    // DIFFERENT older thread instead of re-picking the same one forever.
+    const r1 = runCli(ctx, ["--since", "2026-06-07"]);
+    expect(r1.status).toBe(0);
+    const firstPick = (await readRunLog(ctx))[0]!.deepdive_path;
+    expect(firstPick).toBeDefined();
+    const ledger1 = await readLedgerFile(ctx);
+    expect(ledger1!.deepdive_cursor.last_path).toBe(firstPick);
+    expect(ledger1!.surfaced).toEqual([]); // nothing shipped
+
+    // Second real run reuses the persisted cursor and advances PAST firstPick.
+    const r2 = runCli(ctx, ["--since", "2026-06-07"]);
+    expect(r2.status).toBe(0);
+    const logs = await readRunLog(ctx);
+    const secondPick = logs[logs.length - 1]!.deepdive_path;
+    expect(secondPick).toBeDefined();
+    expect(secondPick).not.toBe(firstPick); // advanced despite zero artifacts
+  });
+
+  test("--dry-run does NOT persist the cursor but REPORTS the would-be advance", async () => {
+    const { status, stdout } = runCli(ctx, ["--dry-run", "--since", "2026-06-07"]);
+    expect(status).toBe(0);
+    const log = (await readRunLog(ctx))[0]!;
+    expect(log.deepdive_path).toBeDefined();
+    // No ledger file was written (dry-run must not mutate state).
+    expect(await readLedgerFile(ctx)).toBeNull();
+    // But the save step REPORTS the would-be advance.
+    const save = log.steps.find((s) => s.step === "save")!;
+    expect(save.status).toBe("skipped");
+    expect(save.detail).toContain("WOULD advance deep-dive cursor");
+    expect(save.detail).toContain("not persisted");
+    // The brief is still produced.
+    expect(stdout).toContain("# Feed-run brief");
+  });
+
+  test("--skip-index --dry-run with unset TRANSCRIPT_DIRS still produces a brief", async () => {
+    // First build an index normally (this run has TRANSCRIPT_DIRS).
+    const built = runCli(ctx, ["--dry-run", "--since", "2026-06-07"]);
+    expect(built.status).toBe(0);
+
+    // Now run with --skip-index and TRANSCRIPT_DIRS UNSET: previously the index
+    // step hard-required the env var and aborted before the brief. With
+    // --skip-index it reuses the existing index and still produces a brief.
+    const res = spawnSync(
+      "bun",
+      [
+        "skills/feed-run/scripts/feed-run.ts",
+        "--index-path",
+        ctx.indexPath,
+        "--ledger",
+        ctx.ledgerPath,
+        "--runs-dir",
+        ctx.runsDir,
+        "--run-log",
+        ctx.runLogPath,
+        "--preferences",
+        ctx.prefsPath,
+        "--artifacts-dir",
+        join(ctx.dir, "artifacts"),
+        "--skip-index",
+        "--dry-run",
+        "--since",
+        "2026-06-07",
+      ],
+      {
+        cwd: REPO,
+        encoding: "utf8",
+        // Deliberately scrub TRANSCRIPT_DIRS from the environment.
+        env: (() => {
+          const e = { ...process.env };
+          delete e.TRANSCRIPT_DIRS;
+          return e;
+        })(),
+      },
+    );
+    expect(res.status).toBe(0);
+    expect(res.stdout ?? "").toContain("# Feed-run brief");
+    const logs = await readRunLog(ctx);
+    const last = logs[logs.length - 1]!;
+    expect(last.outcome).toBe("completed");
+    // The index step was skipped (reused), not run.
+    expect(last.steps.find((s) => s.step === "index")!.status).toBe("skipped");
   });
 });

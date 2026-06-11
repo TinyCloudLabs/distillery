@@ -168,25 +168,24 @@ export function rankDeepDiveCandidates(records: IndexRecord[]): IndexRecord[] {
 }
 
 /**
- * The deep-dive candidate set passed to advanceCursor: the recipe queries
- * `--unsurfaced-only` over ALL-BUT-RECENT transcripts, then ranks them by the
- * novelty proxy, then sorts stably (date then path) for the cursor's stable
- * ordering. We accept already-filtered records (unsurfaced + older than the
- * recency window) and return the ordered PATH list the cursor walks.
+ * The deep-dive candidate ORDER the cursor walks (spec §5 intent: surface
+ * high-novelty old threads, not merely the oldest). The recipe queries
+ * `--unsurfaced-only` over ALL-BUT-RECENT transcripts, then ranks them with the
+ * index-only novelty proxy (`rankDeepDiveCandidates`). This function takes that
+ * ALREADY-RANKED list and returns its PATH order verbatim: NOVELTY is the
+ * primary sort key, with date-desc then path as the deterministic tiebreak
+ * (both already baked into `rankDeepDiveCandidates`). The cursor therefore
+ * advances over the novelty order — the rank is no longer discarded.
  *
- * Per spec §5 the cursor's stable ordering is "date then path"; the novelty
- * proxy ranks the candidate POOL but the cursor itself walks the stable order,
- * so a transcript surfaced on a prior lap (now filtered out) simply drops from
- * the list and the wrap lands on the next still-new thread.
+ * The ordering is still stable for the cursor: a transcript surfaced on a prior
+ * lap (now filtered out by `--unsurfaced-only`) simply drops from the list and
+ * the wrap lands on the next still-new thread.
+ *
+ * Pass the OUTPUT of `rankDeepDiveCandidates` here (not the raw candidate pool)
+ * so the novelty order is preserved.
  */
-export function orderedDeepDivePaths(candidates: IndexRecord[]): string[] {
-  const stable = [...candidates].sort((a, b) => {
-    const da = a.date ?? "";
-    const db = b.date ?? "";
-    if (da !== db) return da < db ? 1 : -1; // date desc (newest first)
-    return a.path.localeCompare(b.path);
-  });
-  return stable.map((r) => r.path);
+export function orderedDeepDivePaths(rankedCandidates: IndexRecord[]): string[] {
+  return rankedCandidates.map((r) => r.path);
 }
 
 export interface BriefInput {
@@ -289,9 +288,10 @@ export function renderBrief(b: BriefInput): string {
     "- save survivors with `save.ts` (auto-publish straight to artifacts/).",
   );
   out.push(
-    "- the recipe then appends each examined transcript to" +
-      " `index/surfaced.json` (path, topic_keys, outcome shipped|examined-no-ship," +
-      ` mode) and persists the advanced deep-dive cursor.`,
+    "- append each examined transcript to `index/surfaced.json` (path," +
+      " topic_keys, outcome shipped|examined-no-ship, mode). The deep-dive" +
+      " cursor is ALREADY advanced + persisted by the orchestrator — do NOT" +
+      " reconstruct it; just append the surfaced entries.",
   );
   out.push("");
   return out.join("\n");

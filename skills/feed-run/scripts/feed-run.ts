@@ -21,6 +21,9 @@
 //     [--since 14d|2026-06-01]     # recency lower bound (relative or absolute); \
 //                                  #   default = last run from ledger, else 7 days \
 //     [--dry-run]                  # stop after producing the brief (no generation) \
+//     [--skip-index]               # reuse the existing index (don't re-index); \
+//                                  #   lets --dry-run / the Generate button run \
+//                                  #   without $TRANSCRIPT_DIRS set \
 //     [--index-path index/corpus-index.json] \
 //     [--ledger index/surfaced.json] \
 //     [--artifacts-dir artifacts] \
@@ -44,6 +47,7 @@ import {
 } from "../../query-corpus/scripts/corpus-query.ts";
 import {
   readLedger,
+  writeLedger,
   advanceCursor,
   type SurfacedLedger,
 } from "../../query-corpus/scripts/surfaced-ledger.ts";
@@ -70,7 +74,7 @@ import {
 function usage(): never {
   console.error(
     "usage: bun skills/feed-run/scripts/feed-run.ts " +
-      "[--mode daily|backfill] [--since 14d|YYYY-MM-DD] [--dry-run] " +
+      "[--mode daily|backfill] [--since 14d|YYYY-MM-DD] [--dry-run] [--skip-index] " +
       "[--index-path PATH] [--ledger PATH] [--artifacts-dir DIR] " +
       "[--preferences PATH] [--runs-dir DIR] [--run-log PATH] [--recency-limit N]",
   );
@@ -80,6 +84,7 @@ function usage(): never {
 let mode: RunMode = "daily";
 let sinceArg: string | undefined;
 let dryRun = false;
+let skipIndex = false;
 let indexPath = "index/corpus-index.json";
 let ledgerPath = "index/surfaced.json";
 let artifactsDir = "artifacts";
@@ -108,6 +113,9 @@ for (let i = 0; i < args.length; i++) {
       break;
     case "--dry-run":
       dryRun = true;
+      break;
+    case "--skip-index":
+      skipIndex = true;
       break;
     case "--index-path":
       indexPath = takeValue(++i);
@@ -218,7 +226,18 @@ async function appendJsonl(path: string, obj: unknown): Promise<void> {
 }
 
 // 1. INDEX — failure ABORTS (everything downstream depends on a fresh index).
-{
+//    --skip-index reuses the already-built index (no re-index, no
+//    $TRANSCRIPT_DIRS required) — for dry-run / the Generate button against an
+//    existing index. The index must already exist; a missing one aborts.
+if (skipIndex) {
+  if ((await readIndex(indexPath)) === undefined) {
+    log("index", "aborted", `--skip-index but no existing index at ${indexPath}`);
+    await finish("aborted", {});
+    console.error("[feed-run] ABORTED: --skip-index requires an existing index; feed unchanged.");
+    process.exit(1);
+  }
+  log("index", "skipped", `--skip-index: reusing existing index at ${indexPath}`);
+} else {
   const argv = ["skills/index-corpus/scripts/index-corpus.ts", "--prune", "--index-path", indexPath];
   const { ok, stderr } = runScript(argv);
   if (!ok) {
@@ -355,18 +374,44 @@ log("brief", "ok", `brief prepared (${recency.length} recency + ${deepDive ? 1 :
 //      --dry-run (the safe default), having produced the brief. A non-dry run
 //      hands the brief to the generation skills (see SKILL.md); this script
 //      does NOT call an LLM, so it logs the handoff and stops too — the agent
-//      driving the recipe performs generation, then re-invokes the ledger write
-//      below via SKILL.md. We never auto-spend here.
+//      driving the recipe performs generation, then APPENDS the surfaced
+//      ENTRIES (per SKILL.md). We never auto-spend here.
+//
+//      CURSOR PERSISTENCE (PR#5 review): the orchestrator holds the
+//      authoritative advanced cursor (`advance.ledger`) and persists it ITSELF
+//      — NOT delegated to the agent. This guarantees the deep-dive cursor moves
+//      off the picked thread even on a zero-artifact run (the agent ships
+//      nothing → no surfaced entry → without this the same thread is re-picked
+//      forever). The agent later appends only surfaced ENTRIES; it must NOT
+//      reconstruct the cursor. EXCEPTION: --dry-run never mutates state, so it
+//      REPORTS the would-be advance but does not write.
 if (dryRun) {
   log("generate", "skipped", "--dry-run: stopped after brief (no generation)");
-  log("save", "skipped", "--dry-run: nothing published");
+  log(
+    "save",
+    "skipped",
+    advance.next
+      ? `--dry-run: nothing published; WOULD advance deep-dive cursor to ${advance.next}${advance.wrapped ? " (wrapped)" : ""} (not persisted)`
+      : "--dry-run: nothing published",
+  );
 } else {
   log(
     "generate",
     "skipped",
     "generation is agent judgment — run the generation skills against the brief (SKILL.md); orchestrator never calls an LLM",
   );
-  log("save", "skipped", "publish + ledger write happen after agent generation (SKILL.md)");
+  if (advance.next) {
+    // Persist the advanced cursor authoritatively (cursor only; the agent
+    // appends surfaced entries onto whatever ledger exists at write time).
+    await writeLedger(ledgerPath, ledger);
+    log(
+      "save",
+      "ok",
+      `deep-dive cursor advanced to ${advance.next}${advance.wrapped ? " (wrapped)" : ""} and persisted; publish + surfaced-entry append happen after agent generation (SKILL.md)`,
+    );
+  } else {
+    log("save", "skipped", "no deep-dive this run (cursor unchanged); publish + surfaced-entry append happen after agent generation (SKILL.md)");
+  }
 }
 
 const finalLog = await finish(

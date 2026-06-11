@@ -105,6 +105,21 @@ const SOUNDCORE_WH_RE =
   /^\*\*(What|Who|When|Where|Why|How|Time|Location|Related Personnel)\*\*\s*:/m;
 // "**speaker1:**" alone on its own line — Soundcore's block-form turn marker.
 const SOUNDCORE_TURN_LABEL_RE = /^\*\*([^*\n]+?)\s*:\s*\*\*\s*$/;
+// A bold inline label ("**Note:** …") only opens a NEW turn mid-region (i.e.
+// when a turn is already open) if its label is distinctly speaker-shaped:
+//   - a Soundcore generic diarizer label ("speaker1", "speaker12"), OR
+//   - a multi-token name ("Tina (Flashbots)", "Samuel Gbafa") — first word
+//     capitalized, then more name words / numbers / a parenthetical.
+// A bare single capitalized word ("Note", "Action", "Summary") is bold
+// EMPHASIS, not a speaker — it stays in the open turn's body. (When NO turn is
+// open yet, the first inline label always opens the turn regardless of shape.)
+const SPEAKER_LIKE_LABEL_RE = new RegExp(
+  String.raw`^(?:speaker\d+|${NAME_WORD}(?:\s+(?:${NAME_WORD}|\d+|\([^)]*\)))+|${NAME_WORD}\s*\([^)]*\))$`,
+  "i",
+);
+function looksLikeSpeakerLabel(label: string): boolean {
+  return SPEAKER_LIKE_LABEL_RE.test(label.trim());
+}
 
 /**
  * Soundcore detection: the raw text has a "## Transcript" heading AND the body
@@ -125,12 +140,38 @@ function isSoundcore(raw: string): boolean {
   return (summaryHeadings?.length ?? 0) >= 2;
 }
 
+/**
+ * True when the Soundcore "no segments" placeholder is the SOLE content under
+ * the (FIRST) `## Transcript` heading — i.e. the recording is genuinely empty.
+ * Returns false when real turn content sits alongside the sentinel (a quote, a
+ * concatenation), so a real transcript is never wiped to zero turns by a raw
+ * substring match. When there is no `## Transcript` heading at all, returns
+ * false (we let the normal parsers run; they self-flag empty on zero turns).
+ */
+function soundcorePlaceholderIsSoleContent(raw: string): boolean {
+  const heading = TRANSCRIPT_HEADING_RE.exec(raw);
+  if (!heading) return false;
+  const region = raw.slice(heading.index + heading[0].length);
+  // Strip every occurrence of the sentinel; if nothing non-whitespace remains,
+  // the placeholder is the only thing under ## Transcript.
+  const stripped = region.replace(new RegExp(SOUNDCORE_EMPTY_RE.source, "g"), "").trim();
+  return stripped === "";
+}
+
 export function parseTranscript(raw: string, path = ""): Transcript {
   // Empty detection (all formats, cheap + high-value): a body whose only
   // diarized content is the Soundcore "no segments" placeholder yields ZERO
   // turns + empty=true, never the metadata-as-text garbage turn the plain-text
   // fallback would otherwise produce. (§4 bug 1.)
-  if (SOUNDCORE_EMPTY_RE.test(raw)) {
+  //
+  // Guard against a raw-substring false positive: a real transcript that merely
+  // CONTAINS the sentinel string (concatenation, a turn quoting the placeholder,
+  // a multi-segment export) must NOT be wiped to zero turns. We only flag empty
+  // when the sentinel is the SOLE content under ## Transcript — see
+  // soundcorePlaceholderIsSoleContent. (If no ## Transcript region, fall through
+  // to normal parsing; the downstream parsers self-flag empty when zero real
+  // turns survive.)
+  if (SOUNDCORE_EMPTY_RE.test(raw) && soundcorePlaceholderIsSoleContent(raw)) {
     const t: Transcript = { path, turns: [], raw, empty: true };
     annotateHeaderMeta(t, raw);
     return t;
@@ -246,10 +287,12 @@ export function parseTranscript(raw: string, path = ""): Transcript {
  * the FOLLOWING line(s), blank-line separated.
  *
  * Two hardenings over the generic path:
- *   1. Everything before the FINAL "## Transcript" heading is non-turn material
+ *   1. Everything before the FIRST "## Transcript" heading is non-turn material
  *      (the WH prose routes into `summary`, never into turns). This makes the
  *      "**What**:" bold lines unreachable as phantom speakers regardless of
- *      where they sit.
+ *      where they sit. Splitting on the FIRST heading (not the last) means a
+ *      file with a duplicated "## Transcript" heading keeps the turns under the
+ *      earlier region instead of silently dropping them.
  *   2. The block-form turn region is parsed explicitly: a "**speaker:**"-alone
  *      line opens a turn; subsequent non-label lines are its body.
  * Generic speaker labels (speaker1, speaker2) are kept as-is; human-named
@@ -259,15 +302,20 @@ function parseSoundcore(raw: string, path: string): Transcript {
   const t: Transcript = { path, turns: [], raw };
   annotateHeaderMeta(t, raw);
 
-  // Split on the FINAL "## Transcript" heading: everything above is summary
-  // prose, everything below is the turn region.
+  // Split on the FIRST "## Transcript" heading: everything above is summary
+  // prose, everything below (including any later duplicate "## Transcript"
+  // heading) is the turn region. Splitting on the first heading keeps turns
+  // under an earlier region instead of dropping them when the heading repeats.
   const lines = raw.split("\n");
-  let lastTranscriptIdx = -1;
+  let firstTranscriptIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (/^##\s+Transcript\s*$/.test(lines[i]!)) lastTranscriptIdx = i;
+    if (/^##\s+Transcript\s*$/.test(lines[i]!)) {
+      firstTranscriptIdx = i;
+      break;
+    }
   }
 
-  if (lastTranscriptIdx === -1) {
+  if (firstTranscriptIdx === -1) {
     // No transcript heading found (shouldn't happen — isSoundcore gates on it).
     // Fall back to generic parsing to avoid losing content.
     return parseTranscriptGeneric(raw, path);
@@ -276,31 +324,44 @@ function parseSoundcore(raw: string, path: string): Transcript {
   // Summary = the WH prose between the header and the transcript region.
   // Capture it verbatim (minus the title/metadata header lines) so downstream
   // still has the pre-written summary if it wants it.
-  const summaryLines = lines.slice(0, lastTranscriptIdx);
+  const summaryLines = lines.slice(0, firstTranscriptIdx);
   const summary = summaryLines
     .filter((l) => !/^#\s/.test(l) && !META_LINE_RE.test(l))
     .join("\n")
     .trim();
   if (summary) t.summary = summary;
 
-  // Turn region: block-form **speaker:** lines + following body lines.
+  // Turn region: block-form **speaker:** lines + following body lines. A later
+  // duplicate "## Transcript" heading inside this region is skipped (not a turn).
   const turnLines: { speaker: string; lines: string[] }[] = [];
-  for (let i = lastTranscriptIdx + 1; i < lines.length; i++) {
+  for (let i = firstTranscriptIdx + 1; i < lines.length; i++) {
     const line = lines[i]!;
+    // A later duplicate "## Transcript" heading inside this region is structure,
+    // not a turn — skip it (its turns already merge into this same region).
+    if (/^##\s+Transcript\s*$/.test(line)) continue;
     const label = SOUNDCORE_TURN_LABEL_RE.exec(line);
     if (label?.[1] !== undefined) {
       turnLines.push({ speaker: label[1].trim(), lines: [] });
       continue;
     }
     // An inline "**speaker:** text" form (label + text on one line) is also
-    // valid Soundcore turn shape — handle it via the generic BOLD_TURN_RE.
+    // valid Soundcore turn shape — handle it via the generic BOLD_TURN_RE. But
+    // guard against greediness: a body line that merely STARTS with bold
+    // emphasis ("**Note:** the rest of the thought") must NOT steal the open
+    // turn. Open a new turn only when there's no open turn yet, OR the label is
+    // distinctly speaker-shaped (looksLikeSpeakerLabel) — mirroring the generic
+    // parser's format-dominance guard. Otherwise the line is body.
     const inline = BOLD_TURN_RE.exec(line);
     if (inline?.[1] !== undefined && line.trimStart().startsWith("**")) {
-      turnLines.push({
-        speaker: inline[1].trim(),
-        lines: inline[3] ? [inline[3]] : [],
-      });
-      continue;
+      const speakerName = inline[1].trim();
+      if (turnLines.length === 0 || looksLikeSpeakerLabel(speakerName)) {
+        turnLines.push({
+          speaker: speakerName,
+          lines: inline[3] ? [inline[3]] : [],
+        });
+        continue;
+      }
+      // Mid-turn bold emphasis → falls through to body append below.
     }
     if (turnLines.length > 0) {
       turnLines[turnLines.length - 1]!.lines.push(line);
