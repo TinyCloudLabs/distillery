@@ -15,6 +15,9 @@ out/
 !.env.example
 *.local
 
+# verification screenshots (regenerated per run)
+/feed/screenshots/
+
 # os / editor
 .DS_Store
 drafts/

@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CardsResponse, FeedCard } from "../../src/types.ts";
-import { Card, FullCard } from "./Card.tsx";
+import { Card, FullCard, Glyph } from "./Card.tsx";
+import { PreferencesPanel } from "./Preferences.tsx";
 
 const PAGE_SIZE = 20;
+const UNDO_MS = 8000;
 
-type Route = { kind: "feed" } | { kind: "article"; type: string; slug: string };
+type Route =
+  | { kind: "feed" }
+  | { kind: "article"; type: string; slug: string }
+  | { kind: "prefs" };
 
 function parseRoute(hash: string): Route {
+  if (hash === "#/preferences") return { kind: "prefs" };
   const m = /^#\/a\/([^/]+)\/([^/]+)$/.exec(hash);
   if (m) {
     return {
@@ -35,14 +41,101 @@ export function App() {
   // Lives here, not in Feed, so a hide survives feed ⇄ article navigation
   // (Feed unmounts while an article is open).
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  // Last hide gets an undo affordance (DESIGN_PLAN: "less" must offer undo).
+  // Undo restores visibility client-side; the feedback event stays logged.
+  const [undo, setUndo] = useState<{ id: string } | null>(null);
+  const undoTimer = useRef<number | null>(null);
+
   const hideCard = useCallback((id: string) => {
     setHidden((prev) => new Set(prev).add(id));
+    setUndo({ id });
+    if (undoTimer.current !== null) window.clearTimeout(undoTimer.current);
+    undoTimer.current = window.setTimeout(() => setUndo(null), UNDO_MS);
   }, []);
 
-  if (route.kind === "article") {
-    return <ArticleView type={route.type} slug={route.slug} onHide={hideCard} />;
-  }
-  return <Feed hidden={hidden} onHide={hideCard} />;
+  // The auto-dismiss must not race keyboard/SR users tabbing toward the Undo
+  // button: pause the timer while the toast (or anything in it) has hover or
+  // focus, restart the full window when it leaves.
+  const pauseUndoTimer = useCallback(() => {
+    if (undoTimer.current !== null) {
+      window.clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
+  }, []);
+
+  const resumeUndoTimer = useCallback(() => {
+    if (undoTimer.current !== null) window.clearTimeout(undoTimer.current);
+    undoTimer.current = window.setTimeout(() => setUndo(null), UNDO_MS);
+  }, []);
+
+  const undoHide = useCallback(() => {
+    setUndo((u) => {
+      if (u) {
+        setHidden((prev) => {
+          const next = new Set(prev);
+          next.delete(u.id);
+          return next;
+        });
+      }
+      return null;
+    });
+    if (undoTimer.current !== null) window.clearTimeout(undoTimer.current);
+  }, []);
+
+  return (
+    <>
+      {route.kind === "article" ? (
+        <ArticleView type={route.type} slug={route.slug} onHide={hideCard} />
+      ) : route.kind === "prefs" ? (
+        <PrefsView />
+      ) : (
+        <Feed hidden={hidden} onHide={hideCard} />
+      )}
+      <div role="status" aria-live="polite">
+        {undo && (
+          <div
+            className="undo-toast"
+            onMouseEnter={pauseUndoTimer}
+            onMouseLeave={resumeUndoTimer}
+            onFocus={pauseUndoTimer}
+            onBlur={resumeUndoTimer}
+          >
+            <span className="undo-toast-text">Removed from feed</span>
+            <button type="button" className="quiet-link" onClick={undoHide}>
+              Undo
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function Skeleton() {
+  return (
+    <div aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="skel-card">
+          <div className="skel-bar kicker" />
+          <div className="skel-bar headline" />
+          <div className="skel-bar headline2" />
+          <div className="skel-bar body" />
+          <div className="skel-bar body2" />
+          <div className="skel-bar body3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function edition(cards: FeedCard[]): string {
+  const newest = cards[0]?.generated_at;
+  if (!newest) return "";
+  const d = new Date(newest);
+  if (Number.isNaN(d.getTime())) return "";
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return `Edition ${mm}.${dd} — `;
 }
 
 function Feed({
@@ -123,54 +216,64 @@ function Feed({
 
   return (
     <>
-      <header className="masthead chassis">
-        <div className="screen">
-          <div>
-            <div className="masthead-title">DISTILLERY</div>
-            <div className="masthead-sub">
-              FEED V1 &middot; {visible.length}/{total} ARTIFACTS
-            </div>
-            {activeTag && (
-              <button
-                type="button"
-                className="card-tag active"
-                style={{ marginTop: 4 }}
-                onClick={() => setActiveTag(null)}
-              >
-                [TAG:{activeTag.toUpperCase()}&times;]
-              </button>
-            )}
-          </div>
-          <div className="masthead-right">
-            <span>&#9646;&#9646;&#9646;&#9646;&#9647; BAT</span>
+      <header className="masthead">
+        <div>
+          <h1 className="masthead-title">Distillery</h1>
+          <p className="masthead-sub">
+            {edition(cards)}
+            {visible.length}/{total} artifacts
+          </p>
+          {activeTag && (
             <button
               type="button"
-              className="po-btn"
-              style={{ padding: "4px 8px", fontSize: 9 }}
-              disabled={loading}
-              onClick={() => void refresh()}
+              className="mono-chip"
+              onClick={() => setActiveTag(null)}
+              aria-label={`Clear tag filter ${activeTag}`}
             >
-              {loading ? "SCAN…" : "▶ RESCAN"}
+              tag: {activeTag} ✕
             </button>
-          </div>
+          )}
         </div>
+        <nav className="masthead-nav" aria-label="Feed controls">
+          <a className="quiet-link" href="#/preferences">
+            <Glyph name="sliders" size={14} /> Preferences
+          </a>
+          <button
+            type="button"
+            className="quiet-link"
+            disabled={loading}
+            onClick={() => void refresh()}
+          >
+            {loading ? "Scanning…" : "Rescan"}
+          </button>
+        </nav>
       </header>
 
-      {error && <div className="feed-error">! {error}</div>}
+      {error && <div className="feed-error">{error}</div>}
 
       <main className="feed">
         {loading ? (
-          <div className="feed-status">-- SCANNING ARTIFACTS --</div>
+          <>
+            <p className="sr-only" role="status">
+              Loading feed
+            </p>
+            <Skeleton />
+          </>
         ) : visible.length === 0 ? (
           <div className="feed-status">
-            -- NO ARTIFACTS{activeTag ? " FOR TAG" : " — RUN A DISTILL SKILL"} --
+            <p className="feed-status-line">Nothing new yet.</p>
+            <p className="feed-status-sub">
+              {activeTag ? "No artifacts for this tag" : "Run a distill skill, then rescan"}
+            </p>
+            <button type="button" className="quiet-link" onClick={() => void refresh()}>
+              Rescan
+            </button>
           </div>
         ) : (
-          visible.map((c, i) => (
+          visible.map((c) => (
             <Card
               key={c.id}
               card={c}
-              idx={i + 1}
               activeTag={activeTag}
               onTagFilter={setActiveTag}
               onHide={onHide}
@@ -178,7 +281,32 @@ function Feed({
           ))
         )}
         {hasMore && !activeTag && <div ref={sentinelRef} style={{ height: 1 }} />}
-        {loadingMore && <div className="feed-status">-- LOADING --</div>}
+        {loadingMore && (
+          <p className="feed-status-sub" style={{ textAlign: "center", padding: "16px 0" }}>
+            Loading…
+          </p>
+        )}
+      </main>
+    </>
+  );
+}
+
+function BackBar() {
+  return (
+    <div className="article-bar">
+      <a className="quiet-link" href="#/">
+        <Glyph name="back" size={14} /> Back to feed
+      </a>
+    </div>
+  );
+}
+
+function PrefsView() {
+  return (
+    <>
+      <BackBar />
+      <main>
+        <PreferencesPanel />
       </main>
     </>
   );
@@ -197,7 +325,7 @@ function ArticleView({
   const [error, setError] = useState<string | null>(null);
 
   // "less" removes the card from the feed — honor that here too: record the
-  // hide, let the "✓ LESS — REMOVED" confirmation flash, then return to the
+  // hide, let the "✓ Less — removed" confirmation flash, then return to the
   // feed (where the card is now gone).
   const hideAndReturn = useCallback(
     (id: string) => {
@@ -231,12 +359,33 @@ function ArticleView({
 
   return (
     <>
-      <a className="article-back" href="#/">
-        &lt;&lt; BACK TO FEED
-      </a>
-      {error && <div className="feed-error">! {error}</div>}
-      {!card && !error && <div className="feed-status">-- LOADING --</div>}
-      {card && <FullCard card={card} onHide={hideAndReturn} />}
+      <BackBar />
+      {error && (
+        <div className="feed-status">
+          <p className="feed-status-line">Couldn&rsquo;t open this artifact.</p>
+          <p className="feed-status-sub">{error}</p>
+        </div>
+      )}
+      {!card && !error && (
+        <p className="sr-only" role="status">
+          Loading article
+        </p>
+      )}
+      {!card && !error && (
+        <div className="skel-card" aria-hidden="true" style={{ borderBottom: "none" }}>
+          <div className="skel-bar kicker" />
+          <div className="skel-bar headline" />
+          <div className="skel-bar headline2" />
+          <div className="skel-bar body" />
+          <div className="skel-bar body2" />
+          <div className="skel-bar body3" />
+        </div>
+      )}
+      {card && (
+        <main>
+          <FullCard card={card} onHide={hideAndReturn} />
+        </main>
+      )}
     </>
   );
 }

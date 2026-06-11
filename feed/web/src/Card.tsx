@@ -1,21 +1,21 @@
 import { marked } from "marked";
-import { useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import type { FeedbackAction, FeedCard } from "../../src/types.ts";
 
 marked.setOptions({ gfm: true, breaks: false });
 
-/** 2-letter type codes, pulse-radio style. Unknown types get initials. */
-export function typeCode(type: string): string {
+/** Human type label for the kicker. Unknown types get prettified words. */
+export function typeLabel(type: string): string {
   const known: Record<string, string> = {
-    "insight-card": "IC",
-    article: "AR",
-    podcast: "PC",
+    "insight-card": "Insight",
+    article: "Article",
+    podcast: "Podcast",
   };
   const k = known[type];
   if (k) return k;
-  const parts = type.split(/[^a-zA-Z0-9]+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
-  return type.slice(0, 2).toUpperCase() || "??";
+  const words = type.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  if (words.length === 0) return "Artifact";
+  return words.map((w) => w[0]!.toUpperCase() + w.slice(1)).join(" ");
 }
 
 export function cardHref(card: FeedCard): string {
@@ -25,7 +25,23 @@ export function cardHref(card: FeedCard): string {
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toISOString().slice(0, 10);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+export function fmtTime(s: number): string {
+  if (!Number.isFinite(s) || s <= 0) return "0:00";
+  const m = Math.floor(s / 60);
+  const r = Math.floor(s % 60);
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+/** `[novelty] lead=<type>: ...` in quality.notes → "quantified drift". */
+export function noveltyLead(card: FeedCard): string | null {
+  const notes = card.quality?.notes;
+  if (!notes) return null;
+  const m = /\[novelty\]\s*lead=([a-z0-9-]+)/i.exec(notes);
+  if (!m) return null;
+  return m[1]!.replace(/-/g, " ");
 }
 
 function md(text: string): string {
@@ -37,28 +53,152 @@ function firstParagraph(text: string): string {
   return text.split(/\n\s*\n/).find((p) => p.trim()) ?? text;
 }
 
-function Body({ text }: { text: string }) {
-  return <div className="card-body" dangerouslySetInnerHTML={{ __html: md(text) }} />;
+/* ---- glyphs: 1.6px-stroke outline icons in currentColor ---- */
+
+type GlyphName = FeedbackAction | "play" | "pause" | "sliders" | "arrow" | "back";
+
+export function Glyph({ name, size = 17 }: { name: GlyphName; size?: number }) {
+  const paths: Record<GlyphName, ReactNode> = {
+    more: <path d="M12 5v14M5 12h14" />,
+    less: <path d="M5 12h14" />,
+    save: <path d="M6 4h12v17l-6-4.5L6 21V4z" />,
+    already_knew: <path d="M4 12.5l5.5 5.5L20 6.5" />,
+    wrong: <path d="M6 6l12 12M18 6L6 18" />,
+    promote: <path d="M7 17L17 7M9 7h8v8" />,
+    play: <path d="M8 5.5v13l11-6.5L8 5.5z" fill="currentColor" stroke="none" />,
+    pause: <path d="M8 5.5v13M16 5.5v13" strokeWidth="2.4" />,
+    sliders: <path d="M4 7h10M18 7h2M16 4.8v4.4M4 17h2M10 17h10M8 14.8v4.4" />,
+    arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
+    back: <path d="M19 12H5M11 18l-6-6 6-6" />,
+  };
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths[name]}
+    </svg>
+  );
 }
 
-function AudioPlayer({ src }: { src: string }) {
+/* ---- kicker: TYPE · DATE · N TRANSCRIPTS · novelty ---- */
+
+function Kicker({ card }: { card: FeedCard }) {
+  const novelty = noveltyLead(card);
+  const sources = card.source_transcripts.length;
   return (
-    <div className="card-audio">
-      <div className="card-audio-label">&#9654; EPISODE.PLAY</div>
-      <audio controls preload="metadata" src={src} />
+    <div className="kicker">
+      <span className="kicker-type">{typeLabel(card.type)}</span>
+      <span className="kicker-dot" aria-hidden="true" />
+      <span>{fmtDate(card.generated_at)}</span>
+      {sources > 0 && (
+        <>
+          <span className="kicker-dot" aria-hidden="true" />
+          <span>
+            {sources} transcript{sources === 1 ? "" : "s"}
+          </span>
+        </>
+      )}
+      {novelty && (
+        <span className="novelty">
+          <span className="novelty-pip" aria-hidden="true" />
+          Novel · {novelty} lead
+        </span>
+      )}
     </div>
   );
 }
 
+function Body({ text }: { text: string }) {
+  return <div className="card-body" dangerouslySetInnerHTML={{ __html: md(text) }} />;
+}
+
+/* ---- audio: circular play + hairline scrubber + mono timestamps ---- */
+
+function AudioRow({ src }: { src: string }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [time, setTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  const toggle = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) void el.play();
+    else el.pause();
+  }, []);
+
+  const seek = useCallback((fraction: number) => {
+    const el = ref.current;
+    if (!el || !Number.isFinite(el.duration)) return;
+    el.currentTime = Math.max(0, Math.min(1, fraction)) * el.duration;
+  }, []);
+
+  const progress = duration > 0 ? time / duration : 0;
+
+  return (
+    <div className="audio">
+      <audio
+        ref={ref}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onTimeUpdate={(e) => {
+          setTime(e.currentTarget.currentTime);
+          // loadedmetadata can fire before listeners attach (cached media) —
+          // recover the duration here too.
+          if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration);
+        }}
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onDurationChange={(e) => {
+          if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration);
+        }}
+      />
+      <button
+        type="button"
+        className="audio-play"
+        aria-label={playing ? "Pause episode" : "Play episode"}
+        onClick={toggle}
+      >
+        <Glyph name={playing ? "pause" : "play"} size={18} />
+      </button>
+      <div className="audio-track">
+        <input
+          type="range"
+          className="audio-range"
+          min={0}
+          max={1000}
+          value={Math.round(progress * 1000)}
+          aria-label="Seek"
+          onChange={(e) => seek(Number(e.target.value) / 1000)}
+        />
+        <div className="audio-times">
+          <span>{fmtTime(time)}</span>
+          <span>{duration ? fmtTime(duration) : "—:—"}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- pull quote: red left rule, serif italic, mono cite ---- */
+
 function QuoteBlock({ card }: { card: FeedCard }) {
   if (!card.quote) return null;
   return (
-    <>
-      <blockquote className="card-quote">&ldquo;{card.quote}&rdquo;</blockquote>
-      {card.attribution && (
-        <div className="card-attribution">-- {card.attribution.toUpperCase()}</div>
-      )}
-    </>
+    <blockquote className="pull">
+      <p>&ldquo;{card.quote}&rdquo;</p>
+      {card.attribution && <cite>{card.attribution}</cite>}
+    </blockquote>
   );
 }
 
@@ -73,17 +213,18 @@ function Tags({
 }) {
   if (card.tags.length === 0) return null;
   return (
-    <div className="card-tags">
+    <div className="tags">
       {card.tags.map((t) => {
         const active = activeTag === t;
         return (
           <button
             key={t}
             type="button"
-            className={`card-tag${active ? " active" : ""}`}
+            className={`tag${active ? " active" : ""}`}
+            aria-pressed={active}
             onClick={() => onTagFilter(active ? null : t)}
           >
-            [{t.toUpperCase()}]
+            {t}
           </button>
         );
       })}
@@ -100,21 +241,21 @@ function Tags({
    promote      commission a deeper artifact   (one-tap; queued confirmation) */
 
 const FB_LABELS: Record<FeedbackAction, string> = {
-  more: "+MORE",
-  less: "-LESS",
-  save: "SAVE",
-  already_knew: "KNEW",
-  wrong: "WRONG",
-  promote: "PROMOTE",
+  more: "More",
+  less: "Less",
+  save: "Save",
+  already_knew: "Knew it",
+  wrong: "Wrong",
+  promote: "Promote",
 };
 
 const FB_CONFIRM: Record<FeedbackAction, string> = {
-  more: "✓ MORE LIKE THIS",
-  less: "✓ LESS — REMOVED",
-  save: "✓ SAVED",
-  already_knew: "✓ NOVELTY NOTED",
-  wrong: "✓ FLAGGED WRONG",
-  promote: "▸ QUEUED FOR DEEPER ARTIFACT",
+  more: "✓ More like this",
+  less: "✓ Less — removed from feed",
+  save: "✓ Saved",
+  already_knew: "✓ Novelty noted",
+  wrong: "✓ Flagged wrong",
+  promote: "▸ Queued for deeper artifact",
 };
 
 /** Actions that prompt for an optional free-text note before sending. */
@@ -173,11 +314,12 @@ export function FeedbackBar({
     return (
       <div className="fb">
         <div className="fb-note">
-          <span className="fb-note-label">{FB_LABELS[action]}?</span>
+          <span className="fb-note-label">{FB_LABELS[action]}</span>
           <input
             type="text"
             value={note}
             placeholder="optional note…"
+            aria-label={`Optional note for ${FB_LABELS[action]}`}
             autoFocus
             onChange={(e) => setNote(e.target.value)}
             onKeyDown={(e) => {
@@ -185,11 +327,11 @@ export function FeedbackBar({
               if (e.key === "Escape") setState({ kind: "idle" });
             }}
           />
-          <button type="button" className="fb-btn accent" onClick={() => void send(action, note)}>
-            SEND
+          <button type="button" className="quiet-link" onClick={() => void send(action, note)}>
+            Send
           </button>
-          <button type="button" className="fb-btn" onClick={() => setState({ kind: "idle" })}>
-            ESC
+          <button type="button" className="quiet-link" onClick={() => setState({ kind: "idle" })}>
+            Cancel
           </button>
         </div>
       </div>
@@ -198,25 +340,34 @@ export function FeedbackBar({
 
   return (
     <div className="fb">
-      <div className="fb-row">
-        {(Object.keys(FB_LABELS) as FeedbackAction[]).map((action) => (
-          <button
-            key={action}
-            type="button"
-            className={`fb-btn${state.kind === "sent" && state.action === action ? " sent" : ""}`}
-            disabled={state.kind === "sending"}
-            title={action.replace("_", " ")}
-            onClick={() => tap(action)}
-          >
-            {FB_LABELS[action]}
-          </button>
-        ))}
+      <div className="fb-row" role="group" aria-label="Feedback">
+        {(Object.keys(FB_LABELS) as FeedbackAction[]).map((action) => {
+          const on = state.kind === "sent" && state.action === action;
+          return (
+            <button
+              key={action}
+              type="button"
+              className={`fb-action${on ? " is-on" : ""}`}
+              aria-pressed={on}
+              disabled={state.kind === "sending"}
+              title={action.replace("_", " ")}
+              onClick={() => tap(action)}
+            >
+              <Glyph name={action} size={17} />
+              <span>{FB_LABELS[action]}</span>
+            </button>
+          );
+        })}
       </div>
-      {state.kind === "sent" && <div className="fb-status">{FB_CONFIRM[state.action]}</div>}
-      {error && <div className="fb-status error">! FEEDBACK FAILED ({error})</div>}
+      <div aria-live="polite">
+        {state.kind === "sent" && <div className="fb-status">{FB_CONFIRM[state.action]}</div>}
+        {error && <div className="fb-status error">Feedback failed ({error})</div>}
+      </div>
     </div>
   );
 }
+
+/* ---- provenance microline ---- */
 
 function Foot({ card }: { card: FeedCard }) {
   const q = card.quality;
@@ -225,27 +376,24 @@ function Foot({ card }: { card: FeedCard }) {
       <span>
         {q ? (
           <>
-            {q.critic_pass ? "✓" : "✗"}CRITIC {q.quotes_verified ? "✓" : "✗"}
-            QUOTES
+            {q.critic_pass ? "✓" : "✗"} critic · {q.quotes_verified ? "✓" : "✗"} quotes
           </>
         ) : (
-          "UNGRADED"
+          "ungraded"
         )}
       </span>
-      <span>{card.generation_model?.toUpperCase() ?? ""}</span>
+      <span>{card.generation_model ?? ""}</span>
     </div>
   );
 }
 
 export function Card({
   card,
-  idx,
   activeTag,
   onTagFilter,
   onHide,
 }: {
   card: FeedCard;
-  idx: number;
   activeTag: string | null;
   onTagFilter: (tag: string | null) => void;
   onHide?: (id: string) => void;
@@ -258,48 +406,36 @@ export function Card({
     : undefined;
 
   return (
-    <article className="chassis">
+    <article className="card">
+      <Kicker card={card} />
+      <h2 className="headline">
+        {isArticle ? <a href={cardHref(card)}>{card.headline}</a> : card.headline}
+      </h2>
       {card.hero_image_url && (
-        <div className="card-hero">
-          <div className="card-hero-frame">
-            <img
-              src={card.hero_image_url}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              onError={(e) => {
-                const wrap = e.currentTarget.closest(".card-hero") as HTMLElement | null;
-                if (wrap) wrap.style.display = "none";
-              }}
-            />
-          </div>
-        </div>
+        <figure className="hero">
+          <img
+            src={card.hero_image_url}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onError={(e) => {
+              const wrap = e.currentTarget.closest(".hero") as HTMLElement | null;
+              if (wrap) wrap.style.display = "none";
+            }}
+          />
+        </figure>
       )}
-      <div className="screen">
-        <div className="card-meta">
-          <span>
-            <span className="dot">&#9679;</span> A{String(idx).padStart(2, "0")}.
-            {typeCode(card.type)}
-          </span>
-          <span>{fmtDate(card.generated_at).toUpperCase()}</span>
-        </div>
-
-        <h2 className="card-headline">
-          {isArticle ? <a href={cardHref(card)}>{card.headline}</a> : card.headline}
-        </h2>
-
-        <QuoteBlock card={card} />
-        {body && <Body text={body} />}
-        {isArticle && card.body && (
-          <a className="read-full" href={cardHref(card)}>
-            &gt;&gt; READ FULL ARTICLE
-          </a>
-        )}
-        {card.audio_url && <AudioPlayer src={card.audio_url} />}
-        <Tags card={card} activeTag={activeTag} onTagFilter={onTagFilter} />
-        <FeedbackBar card={card} onHide={onHide} />
-        <Foot card={card} />
-      </div>
+      <QuoteBlock card={card} />
+      {body && <Body text={body} />}
+      {isArticle && card.body && (
+        <a className="quiet-link read-link" href={cardHref(card)}>
+          Continue reading <Glyph name="arrow" size={14} />
+        </a>
+      )}
+      {card.audio_url && <AudioRow src={card.audio_url} />}
+      <Tags card={card} activeTag={activeTag} onTagFilter={onTagFilter} />
+      <FeedbackBar card={card} onHide={onHide} />
+      <Foot card={card} />
     </article>
   );
 }
@@ -314,39 +450,28 @@ export function FullCard({
   onHide?: (id: string) => void;
 }) {
   return (
-    <article className="chassis article">
+    <article className="card article">
+      <Kicker card={card} />
+      <h1 className="headline">{card.headline}</h1>
       {card.hero_image_url && (
-        <div className="card-hero">
-          <div className="card-hero-frame">
-            <img src={card.hero_image_url} alt="" decoding="async" />
-          </div>
+        <figure className="hero">
+          <img src={card.hero_image_url} alt="" decoding="async" />
+        </figure>
+      )}
+      <QuoteBlock card={card} />
+      {card.body && <Body text={card.body} />}
+      {card.audio_url && <AudioRow src={card.audio_url} />}
+      {card.tags.length > 0 && (
+        <div className="tags">
+          {card.tags.map((t) => (
+            <span key={t} className="tag" role="presentation">
+              {t}
+            </span>
+          ))}
         </div>
       )}
-      <div className="screen">
-        <div className="card-meta">
-          <span>
-            <span className="dot">&#9679;</span> {typeCode(card.type)}.FULL
-          </span>
-          <span>{fmtDate(card.generated_at).toUpperCase()}</span>
-        </div>
-        <h1 className="card-headline" style={{ fontSize: 17 }}>
-          {card.headline}
-        </h1>
-        <QuoteBlock card={card} />
-        {card.body && <Body text={card.body} />}
-        {card.audio_url && <AudioPlayer src={card.audio_url} />}
-        {card.tags.length > 0 && (
-          <div className="card-tags">
-            {card.tags.map((t) => (
-              <span key={t} className="card-tag">
-                [{t.toUpperCase()}]
-              </span>
-            ))}
-          </div>
-        )}
-        <FeedbackBar card={card} onHide={onHide} />
-        <Foot card={card} />
-      </div>
+      <FeedbackBar card={card} onHide={onHide} />
+      <Foot card={card} />
     </article>
   );
 }

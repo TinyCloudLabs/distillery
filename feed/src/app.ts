@@ -2,6 +2,7 @@
 // exercise the full HTTP surface via app.request() without binding a port.
 
 import { Hono } from "hono";
+import { rename } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import {
   appendEvent,
@@ -21,10 +22,32 @@ export interface AppOptions {
   distDir?: string;
   /** Absolute path to the feedback JSONL log (feedback/events.jsonl). */
   feedbackFile: string;
+  /** Absolute path to PREFERENCES.md. Optional — endpoints 404 without it. */
+  preferencesFile?: string;
 }
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+/** PUT /api/preferences size cap, bytes. */
+const PREFERENCES_MAX_BYTES = 10 * 1024;
+
+function sha256Hex(data: ArrayBuffer | Uint8Array): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(data);
+  return hasher.digest("hex");
+}
+
+/** Quoted sha256 of the preferences file bytes (a missing file hashes as empty). */
+async function preferencesEtag(path: string): Promise<string> {
+  const f = Bun.file(path);
+  const buf = (await f.exists()) ? await f.arrayBuffer() : new ArrayBuffer(0);
+  return `"${sha256Hex(buf)}"`;
+}
+
+/** Strip ETag quotes and any weak-validator prefix for comparison. */
+function unquoteEtag(value: string): string {
+  return value.trim().replace(/^W\//i, "").replace(/^"(.*)"$/, "$1");
+}
 
 /** Resolve a child path and refuse anything that escapes the base dir. */
 function safeJoin(base: string, ...parts: string[]): string | null {
@@ -50,9 +73,11 @@ function fileResponse(
   path: string,
   file: ReturnType<typeof Bun.file>,
   rangeHeader: string | null,
+  cacheControl?: string,
 ): Response {
   const size = file.size;
   const type = contentTypeFor(path, file) || "application/octet-stream";
+  const extra: Record<string, string> = cacheControl ? { "Cache-Control": cacheControl } : {};
 
   // Range support — iOS Safari requires it to seek (and often to play) audio.
   if (rangeHeader) {
@@ -80,6 +105,7 @@ function fileResponse(
           "Content-Range": `bytes ${start}-${end}/${size}`,
           "Content-Length": String(end - start + 1),
           "Accept-Ranges": "bytes",
+          ...extra,
         },
       });
     }
@@ -90,6 +116,7 @@ function fileResponse(
       "Content-Type": type,
       "Content-Length": String(size),
       "Accept-Ranges": "bytes",
+      ...extra,
     },
   });
 }
@@ -98,7 +125,62 @@ export function createApp(opts: AppOptions): Hono {
   const artifactsDir = resolve(opts.artifactsDir);
   const distDir = opts.distDir ? resolve(opts.distDir) : null;
   const feedbackFile = resolve(opts.feedbackFile);
+  const preferencesFile = opts.preferencesFile ? resolve(opts.preferencesFile) : null;
   const app = new Hono();
+
+  // PREFERENCES.md is plain text both ways: GET returns the raw file, PUT
+  // replaces it. The panel is honest about being a file editor — the
+  // [learned]-bullet conventions live in the file itself, not the API.
+  //
+  // The file is co-written by humans (this panel) and agents
+  // (distill-preferences), so PUT is guarded with optimistic concurrency:
+  // GET returns an ETag (sha256 of the file bytes; a missing file hashes as
+  // empty), PUT requires If-Match and answers 409 when the file changed
+  // underneath the client, who then refetches and re-applies their edit.
+  app.get("/api/preferences", async (c) => {
+    if (!preferencesFile) return c.text("preferences file not configured", 404);
+    const f = Bun.file(preferencesFile);
+    const buf = (await f.exists()) ? await f.arrayBuffer() : new ArrayBuffer(0);
+    return c.text(new TextDecoder().decode(buf), 200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      ETag: `"${sha256Hex(buf)}"`,
+    });
+  });
+
+  app.put("/api/preferences", async (c) => {
+    if (!preferencesFile) return c.json({ error: "preferences file not configured" }, 404);
+    const ifMatch = c.req.header("if-match");
+    if (!ifMatch) {
+      return c.json(
+        { error: "If-Match header required (GET /api/preferences returns the current ETag)" },
+        428,
+      );
+    }
+    const text = await c.req.text();
+    const bytes = new TextEncoder().encode(text).byteLength;
+    if (bytes > PREFERENCES_MAX_BYTES) {
+      return c.json(
+        { error: `preferences too large: ${bytes} bytes (max ${PREFERENCES_MAX_BYTES})` },
+        413,
+      );
+    }
+    const current = await preferencesEtag(preferencesFile);
+    if (unquoteEtag(ifMatch) !== unquoteEtag(current)) {
+      return c.json(
+        { error: "preferences changed on disk — refetch and reapply your edit", etag: current },
+        409,
+        { ETag: current },
+      );
+    }
+    // Atomic replace: skills read PREFERENCES.md directly, and Bun.write
+    // truncates in place — write a sibling temp file and rename() over it so
+    // no reader ever observes a partial file.
+    const tmp = `${preferencesFile}.tmp-${process.pid}-${Date.now()}`;
+    await Bun.write(tmp, text);
+    await rename(tmp, preferencesFile);
+    const etag = `"${sha256Hex(new TextEncoder().encode(text))}"`;
+    return c.json({ ok: true, bytes, etag }, 200, { ETag: etag });
+  });
 
   app.post("/api/feedback", async (c) => {
     let raw: unknown;
@@ -186,17 +268,24 @@ export function createApp(opts: AppOptions): Hono {
   });
 
   // Static SPA with index.html fallback (hash routing means this is mostly "/").
+  // Cache policy: vite assets are content-hashed → immutable; everything else
+  // (index.html, sw.js, manifest) must revalidate so deploys land immediately.
   app.get("*", async (c) => {
     if (!distDir) return c.text("feed not built — run: bun run build", 404);
     const pathname = decodeURIComponent(new URL(c.req.url).pathname);
     const path = safeJoin(distDir, "." + pathname);
     if (path && path !== distDir) {
       const f = Bun.file(path);
-      if (await f.exists()) return fileResponse(path, f, c.req.header("range") ?? null);
+      if (await f.exists()) {
+        const cache = pathname.startsWith("/assets/")
+          ? "public, max-age=31536000, immutable"
+          : "no-cache";
+        return fileResponse(path, f, c.req.header("range") ?? null, cache);
+      }
     }
     const indexPath = join(distDir, "index.html");
     const index = Bun.file(indexPath);
-    if (await index.exists()) return fileResponse(indexPath, index, null);
+    if (await index.exists()) return fileResponse(indexPath, index, null, "no-cache");
     return c.text("feed not built — run: bun run build", 404);
   });
 
