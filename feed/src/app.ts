@@ -2,6 +2,7 @@
 // exercise the full HTTP surface via app.request() without binding a port.
 
 import { Hono } from "hono";
+import { rename } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import {
   appendEvent,
@@ -29,6 +30,24 @@ const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 /** PUT /api/preferences size cap, bytes. */
 const PREFERENCES_MAX_BYTES = 10 * 1024;
+
+function sha256Hex(data: ArrayBuffer | Uint8Array): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(data);
+  return hasher.digest("hex");
+}
+
+/** Quoted sha256 of the preferences file bytes (a missing file hashes as empty). */
+async function preferencesEtag(path: string): Promise<string> {
+  const f = Bun.file(path);
+  const buf = (await f.exists()) ? await f.arrayBuffer() : new ArrayBuffer(0);
+  return `"${sha256Hex(buf)}"`;
+}
+
+/** Strip ETag quotes and any weak-validator prefix for comparison. */
+function unquoteEtag(value: string): string {
+  return value.trim().replace(/^W\//i, "").replace(/^"(.*)"$/, "$1");
+}
 
 /** Resolve a child path and refuse anything that escapes the base dir. */
 function safeJoin(base: string, ...parts: string[]): string | null {
@@ -112,15 +131,31 @@ export function createApp(opts: AppOptions): Hono {
   // PREFERENCES.md is plain text both ways: GET returns the raw file, PUT
   // replaces it. The panel is honest about being a file editor — the
   // [learned]-bullet conventions live in the file itself, not the API.
+  //
+  // The file is co-written by humans (this panel) and agents
+  // (distill-preferences), so PUT is guarded with optimistic concurrency:
+  // GET returns an ETag (sha256 of the file bytes; a missing file hashes as
+  // empty), PUT requires If-Match and answers 409 when the file changed
+  // underneath the client, who then refetches and re-applies their edit.
   app.get("/api/preferences", async (c) => {
     if (!preferencesFile) return c.text("preferences file not configured", 404);
     const f = Bun.file(preferencesFile);
-    if (!(await f.exists())) return c.text("", 200, { "Content-Type": "text/plain; charset=utf-8" });
-    return c.text(await f.text(), 200, { "Content-Type": "text/plain; charset=utf-8" });
+    const buf = (await f.exists()) ? await f.arrayBuffer() : new ArrayBuffer(0);
+    return c.text(new TextDecoder().decode(buf), 200, {
+      "Content-Type": "text/plain; charset=utf-8",
+      ETag: `"${sha256Hex(buf)}"`,
+    });
   });
 
   app.put("/api/preferences", async (c) => {
     if (!preferencesFile) return c.json({ error: "preferences file not configured" }, 404);
+    const ifMatch = c.req.header("if-match");
+    if (!ifMatch) {
+      return c.json(
+        { error: "If-Match header required (GET /api/preferences returns the current ETag)" },
+        428,
+      );
+    }
     const text = await c.req.text();
     const bytes = new TextEncoder().encode(text).byteLength;
     if (bytes > PREFERENCES_MAX_BYTES) {
@@ -129,8 +164,22 @@ export function createApp(opts: AppOptions): Hono {
         413,
       );
     }
-    await Bun.write(preferencesFile, text);
-    return c.json({ ok: true, bytes });
+    const current = await preferencesEtag(preferencesFile);
+    if (unquoteEtag(ifMatch) !== unquoteEtag(current)) {
+      return c.json(
+        { error: "preferences changed on disk — refetch and reapply your edit", etag: current },
+        409,
+        { ETag: current },
+      );
+    }
+    // Atomic replace: skills read PREFERENCES.md directly, and Bun.write
+    // truncates in place — write a sibling temp file and rename() over it so
+    // no reader ever observes a partial file.
+    const tmp = `${preferencesFile}.tmp-${process.pid}-${Date.now()}`;
+    await Bun.write(tmp, text);
+    await rename(tmp, preferencesFile);
+    const etag = `"${sha256Hex(new TextEncoder().encode(text))}"`;
+    return c.json({ ok: true, bytes, etag }, 200, { ETag: etag });
   });
 
   app.post("/api/feedback", async (c) => {

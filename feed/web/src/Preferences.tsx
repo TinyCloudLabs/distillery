@@ -96,8 +96,17 @@ export function parsePreferences(mdText: string): PrefSection[] {
 type State =
   | { kind: "loading" }
   | { kind: "error"; message: string }
-  | { kind: "view"; text: string }
-  | { kind: "editing"; text: string; draft: string; saving: boolean; saveError: string | null };
+  | { kind: "view"; text: string; etag: string }
+  | {
+      kind: "editing";
+      text: string;
+      etag: string;
+      draft: string;
+      saving: boolean;
+      saveError: string | null;
+      /** PUT answered 409 — the file changed on disk since our GET. */
+      conflict: boolean;
+    };
 
 export function PreferencesPanel() {
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -108,7 +117,8 @@ export function PreferencesPanel() {
     try {
       const res = await fetch("/api/preferences");
       if (!res.ok) throw new Error(`api ${res.status}`);
-      setState({ kind: "view", text: await res.text() });
+      const etag = res.headers.get("etag") ?? "";
+      setState({ kind: "view", text: await res.text(), etag });
     } catch (e) {
       setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -122,12 +132,23 @@ export function PreferencesPanel() {
     if (state.kind !== "editing") return;
     setState({ ...state, saving: true, saveError: null });
     try {
-      const res = await fetch("/api/preferences", { method: "PUT", body: state.draft });
+      const res = await fetch("/api/preferences", {
+        method: "PUT",
+        headers: { "If-Match": state.etag },
+        body: state.draft,
+      });
+      if (res.status === 409) {
+        // Someone (likely a distill agent) rewrote the file since we loaded
+        // it. Don't clobber — surface a reload notice instead.
+        setState({ ...state, saving: false, conflict: true });
+        return;
+      }
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `api ${res.status}`);
       }
-      setState({ kind: "view", text: state.draft });
+      const etag = res.headers.get("etag") ?? state.etag;
+      setState({ kind: "view", text: state.draft, etag });
       setSavedFlash(true);
       window.setTimeout(() => setSavedFlash(false), 2500);
     } catch (e) {
@@ -142,7 +163,10 @@ export function PreferencesPanel() {
   if (state.kind === "loading") {
     return (
       <div className="prefs">
-        <div className="skel-card" style={{ borderBottom: "none" }}>
+        <p className="sr-only" role="status">
+          Loading preferences
+        </p>
+        <div className="skel-card" aria-hidden="true" style={{ borderBottom: "none" }}>
           <div className="skel-bar kicker" />
           <div className="skel-bar headline" />
           <div className="skel-bar body" />
@@ -197,7 +221,7 @@ export function PreferencesPanel() {
           <button
             type="button"
             className="quiet-link"
-            disabled={state.saving || over}
+            disabled={state.saving || over || state.conflict}
             onClick={() => void save()}
           >
             {state.saving ? "Saving…" : "Save"}
@@ -206,12 +230,20 @@ export function PreferencesPanel() {
             type="button"
             className="quiet-link"
             disabled={state.saving}
-            onClick={() => setState({ kind: "view", text: state.text })}
+            onClick={() => setState({ kind: "view", text: state.text, etag: state.etag })}
           >
             Cancel
           </button>
         </div>
         <div aria-live="polite">
+          {state.conflict && (
+            <div className="fb-status error">
+              Preferences changed on disk — reload to get the latest, then reapply your edit.{" "}
+              <button type="button" className="quiet-link" onClick={() => void load()}>
+                Reload
+              </button>
+            </div>
+          )}
           {state.saveError && <div className="fb-status error">Save failed ({state.saveError})</div>}
         </div>
       </section>
@@ -260,9 +292,11 @@ export function PreferencesPanel() {
             setState({
               kind: "editing",
               text: state.text,
+              etag: state.etag,
               draft: state.text,
               saving: false,
               saveError: null,
+              conflict: false,
             })
           }
         >

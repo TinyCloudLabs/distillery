@@ -1,12 +1,15 @@
-// Distillery feed service worker — hand-rolled, three rules:
+// Distillery feed service worker — hand-rolled, four rules:
 //   1. /api/* and /media/*  → network-first, cache fallback (last-loaded feed
 //      and its media keep working offline).
 //   2. navigations          → network-first, fallback to the cached shell.
-//   3. everything else GET  → cache-first (vite assets are content-hashed and
+//   3. /assets/* GET        → cache-first (vite assets are content-hashed and
 //      immutable; new builds get new URLs, so stale entries are harmless).
+//   4. other same-origin GET (manifest, icons) → stale-while-revalidate, so
+//      icon/manifest edits propagate to installed clients on the next load
+//      without needing a VERSION bump.
 // Bump VERSION on SW changes to drop old caches on activate.
 
-const VERSION = "folio-1";
+const VERSION = "folio-2";
 const SHELL_CACHE = `shell-${VERSION}`;
 const RUNTIME_CACHE = `runtime-${VERSION}`;
 
@@ -72,6 +75,29 @@ async function cacheFirst(request) {
   return response;
 }
 
+// Serve from cache immediately (shell precache or runtime), refresh the
+// runtime copy in the background. event.waitUntil keeps the SW alive for the
+// refresh after the cached response has been returned.
+async function staleWhileRevalidate(event, request) {
+  const cached = await caches.match(request);
+  const refresh = fetch(request)
+    .then(async (response) => {
+      if (response.ok && response.status === 200) {
+        const cache = await caches.open(RUNTIME_CACHE);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => undefined);
+  if (cached) {
+    event.waitUntil(refresh);
+    return cached;
+  }
+  const response = await refresh;
+  if (response) return response;
+  return new Response("offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+}
+
 async function navigationHandler(request) {
   try {
     const response = await fetch(request);
@@ -106,5 +132,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(cacheFirst(request));
+  // Only content-hashed vite output is safe to serve cache-first forever.
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
+
+  // Unhashed statics (manifest, icons) — stale-while-revalidate so changes
+  // reach installed clients without a VERSION bump.
+  event.respondWith(staleWhileRevalidate(event, request));
 });

@@ -53,6 +53,21 @@ export function App() {
     undoTimer.current = window.setTimeout(() => setUndo(null), UNDO_MS);
   }, []);
 
+  // The auto-dismiss must not race keyboard/SR users tabbing toward the Undo
+  // button: pause the timer while the toast (or anything in it) has hover or
+  // focus, restart the full window when it leaves.
+  const pauseUndoTimer = useCallback(() => {
+    if (undoTimer.current !== null) {
+      window.clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
+  }, []);
+
+  const resumeUndoTimer = useCallback(() => {
+    if (undoTimer.current !== null) window.clearTimeout(undoTimer.current);
+    undoTimer.current = window.setTimeout(() => setUndo(null), UNDO_MS);
+  }, []);
+
   const undoHide = useCallback(() => {
     setUndo((u) => {
       if (u) {
@@ -78,7 +93,13 @@ export function App() {
       )}
       <div role="status" aria-live="polite">
         {undo && (
-          <div className="undo-toast">
+          <div
+            className="undo-toast"
+            onMouseEnter={pauseUndoTimer}
+            onMouseLeave={resumeUndoTimer}
+            onFocus={pauseUndoTimer}
+            onBlur={resumeUndoTimer}
+          >
             <span className="undo-toast-text">Removed from feed</span>
             <button type="button" className="quiet-link" onClick={undoHide}>
               Undo
@@ -232,7 +253,12 @@ function Feed({
 
       <main className="feed">
         {loading ? (
-          <Skeleton />
+          <>
+            <p className="sr-only" role="status">
+              Loading feed
+            </p>
+            <Skeleton />
+          </>
         ) : visible.length === 0 ? (
           <div className="feed-status">
             <p className="feed-status-line">Nothing new yet.</p>
@@ -339,6 +365,11 @@ function ArticleView({
           <p className="feed-status-line">Couldn&rsquo;t open this artifact.</p>
           <p className="feed-status-sub">{error}</p>
         </div>
+      )}
+      {!card && !error && (
+        <p className="sr-only" role="status">
+          Loading article
+        </p>
       )}
       {!card && !error && (
         <div className="skel-card" aria-hidden="true" style={{ borderBottom: "none" }}>

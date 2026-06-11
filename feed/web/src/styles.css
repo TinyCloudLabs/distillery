@@ -121,6 +121,7 @@ button {
 
 /* mono micro-affordance (active tag chip, etc.) */
 .mono-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -134,6 +135,17 @@ button {
   letter-spacing: 0.13em;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+/* same invisible ≥44×44px hit-area extension as button.tag */
+button.mono-chip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100%, 44px);
+  height: 44px;
 }
 
 /* ---- feed states ---- */
@@ -382,6 +394,7 @@ button {
 }
 
 .tag {
+  position: relative;
   min-height: 32px;
   padding: 0;
   background: none;
@@ -394,6 +407,20 @@ button {
   text-transform: uppercase;
   cursor: pointer;
   transition: color 180ms ease-out, border-color 180ms ease-out;
+}
+
+/* Invisible hit-area extension to ≥44×44px (plan: all tap targets ≥44px)
+   without growing the visual — pseudo-elements are part of the button's
+   hit-test region. Scoped to button.tag: FullCard renders presentational
+   span.tag traces that must not swallow taps. */
+button.tag::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100%, 44px);
+  height: 44px;
 }
 
 .tag:hover {
