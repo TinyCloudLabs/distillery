@@ -28,7 +28,8 @@ beforeAll(async () => {
   stateDir = await mkdtemp(join(tmpdir(), "distillery-feedback-api-"));
   // deliberately in a not-yet-existing subdir — appendEvent must create it
   feedbackFile = join(stateDir, "feedback", "events.jsonl");
-  app = createApp({ artifactsDir: fx.dir, feedbackFile });
+  // auth disabled — the gate's own surface is covered in auth.test.ts
+  app = createApp({ artifactsDir: fx.dir, feedbackFile, auth: { disabled: true } });
 });
 
 afterAll(async () => {

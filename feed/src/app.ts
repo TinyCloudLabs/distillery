@@ -12,6 +12,7 @@ import {
   type FeedbackEvent,
 } from "../../skills/_shared/lib/feedback.ts";
 import { scanArtifacts } from "./scan.ts";
+import { resolveAuth, setupAuth, type AuthEnv, type AuthOptions } from "./auth.ts";
 import type { CardsResponse } from "./types.ts";
 
 export interface AppOptions {
@@ -21,6 +22,12 @@ export interface AppOptions {
   distDir?: string;
   /** Absolute path to the feedback JSONL log (feedback/events.jsonl). */
   feedbackFile: string;
+  /**
+   * OpenKey front-door auth. Unset fields resolve from the environment
+   * (OPENKEY_ALLOWED_ADDRESSES, AUTH_DISABLED) — see src/auth.ts. Tests
+   * inject `{ disabled: true }` or a tmpdir sessionsDbPath + allowlist.
+   */
+  auth?: AuthOptions;
 }
 
 const DEFAULT_LIMIT = 20;
@@ -94,11 +101,15 @@ function fileResponse(
   });
 }
 
-export function createApp(opts: AppOptions): Hono {
+export function createApp(opts: AppOptions): Hono<AuthEnv> {
   const artifactsDir = resolve(opts.artifactsDir);
   const distDir = opts.distDir ? resolve(opts.distDir) : null;
   const feedbackFile = resolve(opts.feedbackFile);
-  const app = new Hono();
+  const app = new Hono<AuthEnv>();
+
+  // Front-door gate: must be registered before any route. Gates /api/* and
+  // /media/*; /auth/* and the SPA shell stay open (see src/auth.ts).
+  setupAuth(app, resolveAuth(opts.auth));
 
   app.post("/api/feedback", async (c) => {
     let raw: unknown;

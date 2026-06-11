@@ -18,6 +18,7 @@ beforeAll(async () => {
     artifactsDir: fx.dir,
     distDir,
     feedbackFile: join(distDir, "events.jsonl"),
+    auth: { disabled: true }, // auth surface is covered in auth.test.ts
   });
 });
 
