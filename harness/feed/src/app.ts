@@ -16,6 +16,8 @@ import { validateArtifact } from "../../../skills/_shared/lib/artifact.ts";
 import { scanArtifacts } from "./scan.ts";
 import { isPendingDraft, isPublished } from "./routing.ts";
 import { resolveAuth, setupAuth, type AuthEnv, type AuthOptions } from "./auth.ts";
+import { getCookie } from "hono/cookie";
+import { SESSION_COOKIE_NAME } from "./session.ts";
 import {
   isValidRunId,
   parseGenerateBody,
@@ -48,6 +50,15 @@ export interface AppOptions {
    * (TRANSCRIPT_DIRS + GEMINI key + claude on PATH — see .env.example).
    */
   generate?: GenerateConfig;
+  /**
+   * One stdout line per request (method, path, status, ms, auth state).
+   * Defaults on, except under `bun test` (NODE_ENV=test) where it would
+   * drown the runner output. The auth state distinguishes `anon` (no
+   * session cookie) from `stale-cookie` (cookie present but no live
+   * session) — the latter is the fingerprint of an invalidated device
+   * retry-polling, which is otherwise invisible server-side.
+   */
+  requestLog?: boolean;
 }
 
 const DEFAULT_LIMIT = 20;
@@ -168,6 +179,25 @@ export function createApp(opts: AppOptions): Hono<AuthEnv> {
   const preferencesFile = opts.preferencesFile ? resolve(opts.preferencesFile) : null;
   const generateConfig = opts.generate ?? null;
   const app = new Hono<AuthEnv>();
+
+  // Request log: registered before everything else so it wraps the gate too
+  // (a gated 401 is exactly the response worth seeing). Reads c.var.session
+  // after next(), which sessionLoader has populated by then.
+  if (opts.requestLog ?? process.env.NODE_ENV !== "test") {
+    app.use("*", async (c, next) => {
+      const t0 = performance.now();
+      await next();
+      const ms = (performance.now() - t0).toFixed(1);
+      const authState = c.var.session
+        ? "authed"
+        : getCookie(c, SESSION_COOKIE_NAME)
+          ? "stale-cookie"
+          : "anon";
+      console.log(
+        `req ${new Date().toISOString()} ${c.req.method} ${c.req.path} ${c.res.status} ${ms}ms ${authState}`,
+      );
+    });
+  }
 
   // Front-door gate: must be registered before any route. Gates /api/* and
   // /media/*; /auth/* and the SPA shell stay open (see src/auth.ts).

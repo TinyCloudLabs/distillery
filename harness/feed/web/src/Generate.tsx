@@ -125,6 +125,11 @@ export function GenerateControl({ onComplete }: { onComplete?: () => void }) {
   const [state, setState] = useState<State>({ kind: "idle" });
   const pollTimer = useRef<number | null>(null);
   const startedAt = useRef<number>(0);
+  // Guards the async poll across unmount: clearing the timer only cancels the
+  // *scheduled* tick — a poll already mid-await would otherwise re-schedule
+  // itself after cleanup and live forever (each 401 it swallowed re-triggered
+  // the AuthGate: the "Checking access" flicker).
+  const alive = useRef(true);
 
   const clearPoll = useCallback(() => {
     if (pollTimer.current !== null) {
@@ -133,38 +138,55 @@ export function GenerateControl({ onComplete }: { onComplete?: () => void }) {
     }
   }, []);
 
-  useEffect(() => () => clearPoll(), [clearPoll]);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      clearPoll();
+    };
+  }, [clearPoll]);
 
   const poll = useCallback(
     async (runId: string) => {
       try {
         const res = await apiFetch(`/api/generate/${encodeURIComponent(runId)}`);
+        if (res.status === 401) {
+          // The session is dead — retrying cannot succeed, and every retry
+          // re-fires the unauthorized event. apiFetch has already surfaced
+          // the sign-in screen; stop here. The run continues server-side.
+          clearPoll();
+          if (alive.current) {
+            setState({ kind: "error", message: "signed out — run continues server-side" });
+          }
+          return;
+        }
         if (!res.ok) throw new Error(`status ${res.status}`);
         const p = (await res.json()) as RunProgress;
 
         if (p.status === "done") {
           clearPoll();
           const count = p.artifacts_published.length || p.artifacts_produced;
-          setState({ kind: "done", count, dryRun: p.dry_run });
+          if (alive.current) setState({ kind: "done", count, dryRun: p.dry_run });
           if (!p.dry_run && count > 0) onComplete?.();
           return;
         }
         if (p.status === "failed") {
           clearPoll();
-          setState({ kind: "error", message: "run failed — nothing published" });
+          if (alive.current) setState({ kind: "error", message: "run failed — nothing published" });
           return;
         }
         if (p.status === "stalled") {
           clearPoll();
-          setState({ kind: "stalled", runId });
+          if (alive.current) setState({ kind: "stalled", runId });
           return;
         }
         // still running — render the live progress.
-        setState({ kind: "running", runId, progress: p });
+        if (alive.current) setState({ kind: "running", runId, progress: p });
       } catch {
         // transient — keep polling; the run is server-side regardless. Don't
         // wipe the last-good progress (keeps the bar from snapping back).
       }
+      if (!alive.current) return;
       if (Date.now() - startedAt.current > POLL_TIMEOUT_MS) {
         clearPoll();
         setState({ kind: "stalled", runId });
