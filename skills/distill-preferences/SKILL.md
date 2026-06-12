@@ -86,7 +86,13 @@ convention documented at the top of that file:
   less) — explain removals to the user.
 - `promote` events also mean **"this topic/format earns deeper
   artifacts"** — reflect that under Topics and/or Formats, and treat the
-  promoted cards as a queue of commissions for deeper artifacts.
+  promoted cards as a queue of commissions for deeper artifacts. Write the
+  `[learned]` bullet so generation backpressure can ACT on it: name the topic/
+  format concretely (the keywords the selection ranker and the generation agent
+  match on), e.g. `- [learned] Single-voice-thesis cards earn deeper artifacts —
+  promote them into expanded pieces (3 promote …)`. PREFERENCES.md is the
+  control valve that steers BOTH selection and generation, so a vague bullet
+  steers nothing — make the loved/disliked subject matter explicit.
 - File sections: **Topics** (subject matter), **Novelty bar**
   (`already_knew` patterns), **Formats** (artifact types, length, media),
   **Style** (voice, sourcing, structure — `wrong` patterns often land
@@ -96,4 +102,24 @@ convention documented at the top of that file:
 
 Tell the user what you changed and why, citing the event counts. If you
 changed nothing because no signal cleared the ≥2 bar, say so — zero
-updates is a valid result.
+updates is a valid result. **In the feed-run loop, when you make zero
+changes, state it explicitly with the phrase "no change warranted"** (e.g.
+"distill: no change warranted, 2 events below threshold"). The deterministic
+post-run verification (`verify-distill.ts`) scans for that marker; without it,
+a run with pending feedback events but no `[learned]` change is flagged
+`distill_skipped=true` (the loop assumes you forgot, not that you judged).
+
+## Enforcement (deterministic — not just convention)
+
+Two guards make the cardinal rules unbreakable in the feed-run loop; both run
+after your distill, make no model calls, and you do not invoke them yourself —
+the orchestrator does:
+
+- **Human-line guard** (`guard-preferences.ts`): if you edit, remove, add, or
+  reorder ANY non-`[learned]` line in `PREFERENCES.md`, the write is REJECTED
+  and the file is RESTORED from a pre-distill snapshot. You may only touch
+  `- [learned]` bullets. (Edge case: a human line that literally starts with
+  `- [learned]` is, per the reserved-prefix convention, agent-owned — but
+  humans never author that prefix, so this is your line to manage.)
+- **Distill verification** (`verify-distill.ts`): see step 4 — make a real
+  `[learned]` change or log "no change warranted".
