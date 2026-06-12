@@ -17,8 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import type { IndexRecord } from "../skills/index-corpus/scripts/corpus-index.ts";
-import type { QueryMatch } from "../skills/query-corpus/scripts/corpus-query.ts";
+import type { IndexRecord } from "../harness/index-corpus/scripts/corpus-index.ts";
+import type { QueryMatch } from "../harness/query-corpus/scripts/corpus-query.ts";
 import {
   capForMode,
   ledgerMode,
@@ -34,7 +34,7 @@ import {
   toDate,
   topicKeysFor,
   type RunLog,
-} from "../skills/feed-run/scripts/feed-run-lib.ts";
+} from "../harness/feed-run/scripts/feed-run-lib.ts";
 
 const REPO = join(import.meta.dir, "..");
 
@@ -328,7 +328,7 @@ function runCli(ctx: RunCtx, extraArgs: string[], env: Record<string, string> = 
   const res = spawnSync(
     "bun",
     [
-      "skills/feed-run/scripts/feed-run.ts",
+      "harness/feed-run/scripts/feed-run.ts",
       "--index-path",
       ctx.indexPath,
       "--ledger",
@@ -597,7 +597,7 @@ describe("feed-run CLI (e2e, synthetic corpus)", () => {
     const res = spawnSync(
       "bun",
       [
-        "skills/feed-run/scripts/feed-run.ts",
+        "harness/feed-run/scripts/feed-run.ts",
         "--index-path",
         ctx.indexPath,
         "--ledger",

@@ -3,7 +3,7 @@
 // The old acquire was check-then-write (`[[ -f $LOCK ]]` … `printf > $LOCK`):
 // two wrappers (button + cron, or two clicks) could both pass the `-f` test
 // before either wrote → two `claude -p` runs → double Gemini spend. The fix is
-// an atomic `mkdir` lockdir. These tests drive the REAL ops/launchd/feedrun.sh
+// an atomic `mkdir` lockdir. These tests drive the REAL harness/ops/launchd/feedrun.sh
 // via its FEEDRUN_LOCK_HOLD test seam (acquire the lock, hold, exit — no claude /
 // no bun generation), proving:
 //   1. concurrent acquire → exactly ONE wins (exit 0), the other 409s (exit 75);
@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 
-const WRAPPER = join(import.meta.dir, "..", "ops", "launchd", "feedrun.sh");
+const WRAPPER = join(import.meta.dir, "..", "harness", "ops", "launchd", "feedrun.sh");
 
 let repo: string;
 let binDir: string;
@@ -26,8 +26,8 @@ let binDir: string;
 beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "feedrun-lock-"));
   // The wrapper resolves REPO from its own path ($SCRIPT_DIR/../..), so we copy
-  // it into a temp repo layout: <repo>/ops/launchd/feedrun.sh.
-  await mkdir(join(repo, "ops", "launchd"), { recursive: true });
+  // it into a temp repo layout: <repo>/harness/ops/launchd/feedrun.sh.
+  await mkdir(join(repo, "harness", "ops", "launchd"), { recursive: true });
   await mkdir(join(repo, "index"), { recursive: true });
   binDir = join(repo, "bin");
   await mkdir(binDir, { recursive: true });
@@ -40,12 +40,12 @@ beforeEach(async () => {
 
   // feedrun.env: put the stub bin first on PATH.
   await writeFile(
-    join(repo, "ops", "launchd", "feedrun.env"),
+    join(repo, "harness", "ops", "launchd", "feedrun.env"),
     `export PATH="${binDir}:$PATH"\n`,
   );
 
   const wrapperSrc = await Bun.file(WRAPPER).text();
-  const wrapperDst = join(repo, "ops", "launchd", "feedrun.sh");
+  const wrapperDst = join(repo, "harness", "ops", "launchd", "feedrun.sh");
   await writeFile(wrapperDst, wrapperSrc);
   await chmod(wrapperDst, 0o755);
 });
@@ -57,7 +57,7 @@ afterEach(async () => {
 /** Run the temp-repo wrapper to completion; resolves with its exit code. */
 function runWrapper(env: Record<string, string>): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn("/bin/bash", [join(repo, "ops", "launchd", "feedrun.sh")], {
+    const child = spawn("/bin/bash", [join(repo, "harness", "ops", "launchd", "feedrun.sh")], {
       env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, ...env },
       stdio: "ignore",
     });
@@ -113,7 +113,7 @@ describe("feedrun.sh atomic lock", () => {
     // Use a PATH that has the stub bun dir but no `claude`, so `command -v claude`
     // fails → exit 78 BEFORE the atomic acquire. FEEDRUN_RUN_ID marks us route-spawned.
     const code = await new Promise<number>((resolve) => {
-      const child = spawn("/bin/bash", [join(repo, "ops", "launchd", "feedrun.sh")], {
+      const child = spawn("/bin/bash", [join(repo, "harness", "ops", "launchd", "feedrun.sh")], {
         env: {
           HOME: process.env.HOME,
           PATH: `${binDir}:/usr/bin:/bin`, // stub bun + coreutils; NO claude
@@ -137,7 +137,7 @@ describe("feedrun.sh atomic lock", () => {
     const code = await new Promise<number>((resolve) => {
       const child = spawn(
         "/bin/bash",
-        [join(repo, "ops", "launchd", "feedrun.sh"), "--dry-run"],
+        [join(repo, "harness", "ops", "launchd", "feedrun.sh"), "--dry-run"],
         {
           env: {
             HOME: process.env.HOME,
@@ -160,7 +160,7 @@ describe("feedrun.sh atomic lock", () => {
     const code = await new Promise<number>((resolve) => {
       const child = spawn(
         "/bin/bash",
-        [join(repo, "ops", "launchd", "feedrun.sh"), "--bogus"],
+        [join(repo, "harness", "ops", "launchd", "feedrun.sh"), "--bogus"],
         { env: { HOME: process.env.HOME, PATH: `${binDir}:/usr/bin:/bin` }, stdio: "ignore" },
       );
       child.on("exit", (c) => resolve(c ?? -1));

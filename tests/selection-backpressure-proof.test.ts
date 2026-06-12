@@ -19,20 +19,20 @@
 
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { readIndex } from "../skills/index-corpus/scripts/corpus-index.ts";
-import { queryCorpus } from "../skills/query-corpus/scripts/corpus-query.ts";
+import { readIndex } from "../harness/index-corpus/scripts/corpus-index.ts";
+import { queryCorpus } from "../harness/query-corpus/scripts/corpus-query.ts";
 import {
   readLedger,
   advanceCursor,
-} from "../skills/query-corpus/scripts/surfaced-ledger.ts";
+} from "../harness/query-corpus/scripts/surfaced-ledger.ts";
 import { priorArtifactIndex } from "../skills/_shared/lib/novelty.ts";
-import { parsePreferenceSignal } from "../skills/query-corpus/scripts/preference-signal.ts";
+import { parsePreferenceSignal } from "../harness/query-corpus/scripts/preference-signal.ts";
 import {
   rankRecencyByPreference,
   olderThan,
   rankDeepDiveCandidates,
   orderedDeepDivePaths,
-} from "../skills/feed-run/scripts/feed-run-lib.ts";
+} from "../harness/feed-run/scripts/feed-run-lib.ts";
 
 const INDEX_PATH = "index/corpus-index.json";
 const PREFS_PATH = "PREFERENCES.md";

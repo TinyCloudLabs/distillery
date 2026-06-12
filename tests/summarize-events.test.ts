@@ -6,7 +6,7 @@ import type { FeedbackSummary } from "../skills/_shared/lib/feedback.ts";
 
 const SCRIPT = resolve(
   import.meta.dir,
-  "../skills/distill-preferences/scripts/summarize-events.ts",
+  "../harness/distill-preferences/scripts/summarize-events.ts",
 );
 
 let dir: string;

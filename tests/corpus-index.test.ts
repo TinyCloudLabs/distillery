@@ -14,7 +14,7 @@ import {
   resolveInputs,
   sourceFromPath,
   type CorpusIndex,
-} from "../skills/index-corpus/scripts/corpus-index.ts";
+} from "../harness/index-corpus/scripts/corpus-index.ts";
 
 // --- synthetic fixtures (no real content) ---------------------------------
 
@@ -329,7 +329,7 @@ describe("CLI end-to-end (stderr counts, no content)", () => {
     const dir = await mkdtemp(join(tmpdir(), "corpus-index-cli-"));
     const indexPath = join(dir, "index", "corpus-index.json");
     await mkdir(join(dir, "index"), { recursive: true });
-    const script = join(import.meta.dir, "..", "skills", "index-corpus", "scripts", "index-corpus.ts");
+    const script = join(import.meta.dir, "..", "harness", "index-corpus", "scripts", "index-corpus.ts");
     const proc = Bun.spawn(["bun", script, ...dirs(), "--index-path", indexPath], {
       stdout: "pipe",
       stderr: "pipe",
@@ -353,7 +353,7 @@ describe("CLI end-to-end (stderr counts, no content)", () => {
     const dir = await mkdtemp(join(tmpdir(), "corpus-index-cli-"));
     const indexPath = join(dir, "index", "corpus-index.json");
     await mkdir(join(dir, "index"), { recursive: true });
-    const script = join(import.meta.dir, "..", "skills", "index-corpus", "scripts", "index-corpus.ts");
+    const script = join(import.meta.dir, "..", "harness", "index-corpus", "scripts", "index-corpus.ts");
     const run = async () => {
       const p = Bun.spawn(["bun", script, ...dirs(), "--index-path", indexPath], {
         stdout: "pipe",

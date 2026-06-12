@@ -28,12 +28,12 @@ out/
 # launchd per-deploy env (machine-specific tool paths + the OpenKey allowlist +
 # transcript dirs) and runtime logs — never committed; .example files document
 # the shape. Same stance as .env.
-/ops/launchd/feedrun.env
-/ops/launchd/server.env
-/ops/launchd/logs/
+/harness/ops/launchd/feedrun.env
+/harness/ops/launchd/server.env
+/harness/ops/launchd/logs/
 
 # verification screenshots (regenerated per run)
-/feed/screenshots/
+/harness/feed/screenshots/
 
 # os / editor / harness scratch
 .DS_Store

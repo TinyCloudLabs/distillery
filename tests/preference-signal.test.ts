@@ -10,20 +10,20 @@
 // All transcript content here is SYNTHETIC — never real meeting text.
 
 import { describe, expect, test } from "bun:test";
-import type { IndexRecord } from "../skills/index-corpus/scripts/corpus-index.ts";
-import type { QueryMatch } from "../skills/query-corpus/scripts/corpus-query.ts";
+import type { IndexRecord } from "../harness/index-corpus/scripts/corpus-index.ts";
+import type { QueryMatch } from "../harness/query-corpus/scripts/corpus-query.ts";
 import {
   parsePreferenceSignal,
   scorePreferenceMatch,
   hasSignal,
   bulletText,
   keywordsFrom,
-} from "../skills/query-corpus/scripts/preference-signal.ts";
+} from "../harness/query-corpus/scripts/preference-signal.ts";
 import {
   rankRecencyByPreference,
   rankDeepDiveCandidates,
   orderedDeepDivePaths,
-} from "../skills/feed-run/scripts/feed-run-lib.ts";
+} from "../harness/feed-run/scripts/feed-run-lib.ts";
 
 // --- synthetic fixtures ----------------------------------------------------
 
