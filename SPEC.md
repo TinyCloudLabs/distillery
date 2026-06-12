@@ -46,15 +46,32 @@ harness's index + feed-run + launchd design.)
 
 ## Architecture
 
-### Skills layout
+### Repo layout — the two layers
+
+The directory structure mirrors the layer boundary: `skills/` holds the
+portable artifact primitives + the shared lib; `harness/` holds the
+distillery-specific orchestration (the corpus/feed-run skills, the feed app,
+and ops). Runtime state + config (`artifacts/`, `feedback/`, `index/`,
+`.quarantine/`, `PREFERENCES.md`, `.env`) live at the **repo root** and are
+referenced relative to the repo root — never the cwd or an app dir.
 
 ```
-skills/
-  _shared/lib/          shared plumbing (secrets, transcript, artifact, gemini)
-  extract-insights/     SKILL.md + scripts/   ← the template skill
-  illustrate-card/      (next phase)
-  write-article/        (next phase)
-  make-podcast/         (next phase)
+skills/                   Layer 1 — portable, agent-agnostic
+  _shared/lib/            shared plumbing (secrets, transcript, artifact, gemini, …)
+  extract-insights/       SKILL.md + scripts/   ← the template skill
+  write-article/  make-podcast/  illustrate-card/
+  banger-extractor/  investor-snippet/  quote-card/  person-brief/
+
+harness/                  Layer 2 — distillery-specific orchestration
+  index-corpus/           SKILL.md + scripts/   corpus index
+  query-corpus/           retrieval over the index
+  distill-preferences/    feedback → [learned] PREFERENCES.md loop
+  feed-run/               the saved feed-run recipe (runbook + orchestrator)
+  feed/                   the Folio feed PWA (its own bun workspace)
+  ops/launchd/            plists + feedrun.sh/server.sh wrappers
+
+# repo-root runtime state/config (gitignored except PREFERENCES.md):
+artifacts/  feedback/  index/  .quarantine/  PREFERENCES.md  .env
 ```
 
 One skill = one folder = `SKILL.md` + `scripts/*.ts`. **Agent provides
