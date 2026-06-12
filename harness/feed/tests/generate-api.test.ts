@@ -212,7 +212,7 @@ describe("GET /api/generate/:run_id — status shape", () => {
     expect(res.status).toBe(404);
   });
 
-  test("a finished run reads outcome + artifacts off the orchestrator run-log", async () => {
+  test("a finished run → progress status 'done' with the published artifacts", async () => {
     const app = appWith(makeConfig(recordingSpawn([])));
     const cookie = await signInCookie(app);
 
@@ -234,7 +234,9 @@ describe("GET /api/generate/:run_id — status shape", () => {
         mode: "daily",
         dry_run: false,
         outcome: "completed",
+        cap: 3,
         artifacts_published: ["insight-card/foo", "article/bar"],
+        steps: [{ step: "save", status: "ok" }],
         finished_at: "2026-06-11T07:05:00Z",
       }),
     );
@@ -243,22 +245,106 @@ describe("GET /api/generate/:run_id — status shape", () => {
       headers: { cookie },
     });
     expect(res.status).toBe(200);
+    // The endpoint now returns the structured PROGRESS object (the staged UI
+    // signal) — `done` is the terminal status, the published list rides along.
     const s = (await res.json()) as {
       status: string;
-      outcome: string;
+      done: boolean;
+      current_stage: string | null;
       artifacts_published: string[];
-      finished_at: string;
     };
     expect(s.status).toBe("done");
-    expect(s.outcome).toBe("completed");
+    expect(s.done).toBe(true);
+    expect(s.current_stage).toBeNull();
     expect(s.artifacts_published).toEqual(["insight-card/foo", "article/bar"]);
-    expect(s.finished_at).toBe("2026-06-11T07:05:00Z");
   });
 
   test("status endpoint is gated → unauth 401", async () => {
     const app = appWith(makeConfig(recordingSpawn([])));
     const res = await app.request("/api/generate/whatever");
     expect(res.status).toBe(401);
+  });
+});
+
+// ===========================================================================
+// REAL STAGED PROGRESS — GET /api/generate/:run_id returns the progress object
+// ===========================================================================
+describe("GET /api/generate/:run_id — staged progress object", () => {
+  test("a running run returns stages + artifact count + activity tail", async () => {
+    const app = appWith(makeConfig(recordingSpawn([])));
+    const cookie = await signInCookie(app);
+    const start = await app.request("/api/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({}),
+    });
+    const { run_id } = (await start.json()) as { run_id: string };
+    const runDir = join(runsDir, run_id.replace(/[:]/g, "-"));
+
+    // The orchestrator writes its run-log (mid-run: generate active, no outcome).
+    await writeFile(
+      join(runDir, "run-log.json"),
+      JSON.stringify({
+        cap: 3,
+        steps: [
+          { step: "index", status: "ok" },
+          { step: "distill", status: "ok" },
+          { step: "query-recency", status: "ok" },
+          { step: "query-deepdive", status: "ok" },
+          { step: "brief", status: "ok" },
+          { step: "generate", status: "active" },
+        ],
+      }),
+    );
+    // The agent appends a progress marker line.
+    await writeFile(
+      join(runDir, "progress.jsonl"),
+      `{"ts":"t1","detail":"surveying transcripts"}\n{"ts":"t2","detail":"drafting insight-card"}\n`,
+    );
+
+    const res = await app.request(`/api/generate/${encodeURIComponent(run_id)}`, {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    const p = (await res.json()) as {
+      status: string;
+      stages: { step: string; status: string }[];
+      current_stage: string;
+      cap: number;
+      latest_activity: string;
+      artifacts_produced: number;
+      done: boolean;
+    };
+    expect(p.status).toBe("running");
+    expect(p.cap).toBe(3);
+    expect(p.current_stage).toBe("generate");
+    expect(p.latest_activity).toBe("drafting insight-card");
+    expect(p.stages.find((s) => s.step === "index")!.status).toBe("ok");
+    expect(p.done).toBe(false);
+  });
+
+  test("a FAILED status.json surfaces as failed through the endpoint (no eternal spin)", async () => {
+    const app = appWith(makeConfig(recordingSpawn([])));
+    const cookie = await signInCookie(app);
+    const start = await app.request("/api/generate", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({}),
+    });
+    const { run_id } = (await start.json()) as { run_id: string };
+    const runDir = join(runsDir, run_id.replace(/[:]/g, "-"));
+    // Simulate the dead-run bug: status flips to failed, run never finishes.
+    await writeFile(
+      join(runDir, "status.json"),
+      JSON.stringify({ run_id, status: "failed", dry_run: false, mode: "daily", started_at: "2026-06-11T07:00:00Z" }),
+    );
+    const res = await app.request(`/api/generate/${encodeURIComponent(run_id)}`, {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    const p = (await res.json()) as { status: string; done: boolean };
+    expect(p.status).toBe("failed");
+    expect(p.done).toBe(true);
   });
 });
 

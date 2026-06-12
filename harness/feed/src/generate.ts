@@ -17,7 +17,7 @@
 // orchestrates the detached spawn + reports status off disk.
 
 import { spawn as nodeSpawn } from "node:child_process";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, stat } from "node:fs/promises";
 import {
   existsSync,
   readFileSync,
@@ -400,6 +400,334 @@ export async function readRunStatus(
     dry_run: false,
     mode: "daily",
     started_at: "",
+  };
+}
+
+// ===========================================================================
+// REAL GENERATION PROGRESS (replaces the indefinite spinner).
+//
+// Three deterministic-to-soft signals, in robustness order:
+//
+//   1. STAGE TRACK  — the orchestrator's run-log.json `steps[]` (index → distill
+//      → query-recency → query-deepdive → brief → generate → … → save), each
+//      {step,status}. Works with ZERO agent cooperation. While the run-log does
+//      not yet exist, we show the canonical pipeline as all-pending so the UI has
+//      a real skeleton from t=0.
+//   2. ARTIFACT COUNT — artifact.json files under <repo>/artifacts/<type>/<slug>/
+//      whose mtime is newer than the run's started_at, capped by the brief's
+//      MAX_ARTIFACTS_PER_RUN. This is the FILL signal during the Generate stage.
+//   3. ACTIVITY LINE — the agent (best-effort) appends one JSON line per step to
+//      index/runs/<run_id>/progress.jsonl; we tail the last well-formed line.
+//      MUST degrade gracefully: absent/stale → null, never a broken/faked state.
+//
+// FAILURE + STALENESS: a failed status.json (outcome/status "failed"|"aborted")
+// or a run-log outcome "aborted" surfaces as `failed` so the UI stops (kills the
+// eternal-'running' dead-run bug). A run whose status says running but whose
+// newest signal (run-log, progress.jsonl, status.json, or a fresh artifact) has
+// not advanced for > STALE_AFTER_MS surfaces as `stalled` rather than spinning
+// forever. NO faked percentage/ETA — the bar only moves on real stage/artifact
+// signal.
+// ===========================================================================
+
+/** The canonical ordered pipeline the UI renders as a stage track. Kept in sync
+ * with feed-run-lib's PIPELINE_STEPS but inlined here so the feed server has no
+ * dependency on the feed-run package. */
+export const PROGRESS_STEPS = [
+  "index",
+  "distill",
+  "query-recency",
+  "query-deepdive",
+  "brief",
+  "generate",
+  "guard",
+  "verify-distill",
+  "save",
+] as const;
+export type ProgressStep = (typeof PROGRESS_STEPS)[number];
+
+/** Default artifact cap when the run-log hasn't recorded one yet (daily default). */
+export const DEFAULT_RUN_CAP = 3;
+
+/** A run is `stalled` if running but no signal advanced for this long. */
+export const STALE_AFTER_MS = 8 * 60 * 1000;
+
+export type ProgressStatus = "running" | "done" | "failed" | "stalled";
+export type ProgressStepStatus = "pending" | "ok" | "skipped" | "degraded" | "failed" | "aborted" | "active";
+
+export interface ProgressStage {
+  step: string;
+  status: ProgressStepStatus;
+}
+
+/** The structured progress object the GET endpoint returns (the real UI signal). */
+export interface RunProgress {
+  run_id: string;
+  status: ProgressStatus;
+  /** The ordered stage track — always the full canonical pipeline, statuses filled. */
+  stages: ProgressStage[];
+  /** The step currently in flight (first non-terminal/active), or null when done/failed. */
+  current_stage: string | null;
+  /** Artifact.json files created since started_at (the fill signal during generate). */
+  artifacts_produced: number;
+  /** The run's artifact cap (MAX_ARTIFACTS_PER_RUN) from the run-log, or the default. */
+  cap: number;
+  /** Outward drafts produced (banger / investor-snippet), once the run-log records them. */
+  drafts_produced: number;
+  /** The last well-formed progress.jsonl line's detail, or null (graceful degrade). */
+  latest_activity: string | null;
+  /** ISO timestamp the run started (route stamp). */
+  started_at: string;
+  /** Wall-clock since started_at, ms (0 if no started_at). */
+  elapsed_ms: number;
+  /** True once the run reached a terminal state (done | failed). NOT true for stalled. */
+  done: boolean;
+  /** Whether this was a dry-run (preview). */
+  dry_run: boolean;
+  /** Final published artifact slugs, once the run-log records them. */
+  artifacts_published: string[];
+}
+
+/** Minimal shape of the orchestrator's run-log.json we read for the stage track. */
+interface RunLogShape {
+  outcome?: string;
+  status?: string;
+  cap?: number;
+  steps?: { step?: string; status?: string; detail?: string }[];
+  artifacts_published?: string[];
+  drafts_produced?: string[];
+  finished_at?: string;
+  dry_run?: boolean;
+}
+
+/** Parse the last well-formed JSON object line of a progress.jsonl body. */
+export function tailProgressLine(body: string): { ts?: string; detail: string } | null {
+  const lines = body.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (!line) continue;
+    try {
+      const obj = JSON.parse(line) as { ts?: string; detail?: unknown };
+      if (typeof obj.detail === "string" && obj.detail.length > 0) {
+        return { ts: typeof obj.ts === "string" ? obj.ts : undefined, detail: obj.detail };
+      }
+    } catch {
+      // malformed tail line — keep scanning upward for the last good one
+    }
+  }
+  return null;
+}
+
+/**
+ * Merge the canonical pipeline with the run-log's recorded steps, marking the
+ * first not-yet-terminal step as `active` while the run is still going. Steps the
+ * run-log hasn't reached stay `pending`. Deterministic; no agent cooperation.
+ */
+export function buildStages(
+  loggedSteps: { step?: string; status?: string }[] | undefined,
+  runIsTerminal: boolean,
+): { stages: ProgressStage[]; current: string | null } {
+  const byStep = new Map<string, string>();
+  for (const s of loggedSteps ?? []) {
+    if (typeof s.step === "string" && typeof s.status === "string") byStep.set(s.step, s.status);
+  }
+  const TERMINAL_STEP = new Set(["ok", "skipped", "degraded", "failed", "aborted"]);
+  const stages: ProgressStage[] = PROGRESS_STEPS.map((step) => {
+    const logged = byStep.get(step);
+    return { step, status: (logged as ProgressStepStatus) ?? "pending" };
+  });
+
+  // The current stage = the first stage that is not terminal. If the run itself
+  // is terminal we mark no active stage (everything resolved). Otherwise the
+  // first pending stage becomes `active` so the UI shows a live cursor even
+  // before the orchestrator logs that step.
+  let current: string | null = null;
+  if (!runIsTerminal) {
+    for (const s of stages) {
+      if (!TERMINAL_STEP.has(s.status)) {
+        if (s.status === "pending") s.status = "active";
+        current = s.step;
+        break;
+      }
+    }
+  }
+  return { stages, current };
+}
+
+/** Count artifact.json files under artifactsDir whose mtime is at/after `sinceMs`. */
+export async function countArtifactsSince(artifactsDir: string, sinceMs: number): Promise<number> {
+  let count = 0;
+  let types: { name: string; isDirectory(): boolean }[];
+  try {
+    types = await readdir(artifactsDir, { withFileTypes: true });
+  } catch {
+    return 0; // no artifacts dir yet
+  }
+  for (const t of types) {
+    if (!t.isDirectory()) continue;
+    let slugs: { name: string; isDirectory(): boolean }[];
+    try {
+      slugs = await readdir(join(artifactsDir, t.name), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const slug of slugs) {
+      if (!slug.isDirectory()) continue;
+      const af = join(artifactsDir, t.name, slug.name, "artifact.json");
+      try {
+        const st = await stat(af);
+        // mtime tolerance: a 1s clock-skew grace so an artifact written in the
+        // same second as started_at still counts (mtime resolution + write lag).
+        if (st.mtimeMs >= sinceMs - 1000) count += 1;
+      } catch {
+        // no artifact.json in this slug dir — skip
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Aggregate the real progress object (GET /api/generate/:run_id). Reuses the
+ * path-safe run-id guard, reads run-log.json (stages + cap + outcome),
+ * progress.jsonl (activity tail), status.json (start time + failed flag), and
+ * counts fresh artifacts. Never throws — every read is defensive.
+ *
+ * Terminal mapping:
+ *   - run-log outcome "completed"           → done
+ *   - run-log outcome "aborted" | status.json status "failed"/"aborted"
+ *     | progress/status "failed"            → failed  (UI stops; no eternal spin)
+ *   - status running but no signal advanced for > STALE_AFTER_MS → stalled
+ *   - otherwise                             → running
+ */
+export async function readRunProgress(
+  runId: string,
+  cfg: Pick<GenerateConfig, "repoRoot" | "runsDir"> & { artifactsDir?: string },
+  now: () => number = () => Date.now(),
+): Promise<RunProgress> {
+  const repoRoot = resolve(cfg.repoRoot);
+  const runsDir = cfg.runsDir ?? join(repoRoot, "index", "runs");
+  const artifactsDir = cfg.artifactsDir ?? join(repoRoot, "artifacts");
+  const nowMs = now();
+
+  const empty: RunProgress = {
+    run_id: runId,
+    status: "failed",
+    stages: PROGRESS_STEPS.map((step) => ({ step, status: "pending" as ProgressStepStatus })),
+    current_stage: null,
+    artifacts_produced: 0,
+    cap: DEFAULT_RUN_CAP,
+    drafts_produced: 0,
+    latest_activity: null,
+    started_at: "",
+    elapsed_ms: 0,
+    done: true,
+    dry_run: false,
+    artifacts_published: [],
+  };
+
+  const runDir = safeRunDir(runsDir, runId);
+  if (runDir === null) return { ...empty, status: "failed" };
+
+  // status.json — the route's own stamp (start time, dry_run, possible failure).
+  let stamp: (RunStatus & { status?: string }) | undefined;
+  let stampMtimeMs = 0;
+  try {
+    stamp = JSON.parse(await readFile(join(runDir, "status.json"), "utf8")) as RunStatus;
+    try {
+      stampMtimeMs = (await stat(join(runDir, "status.json"))).mtimeMs;
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    stamp = undefined;
+  }
+
+  // No stamp AND no run dir signal → unknown run; the route maps this to 404.
+  // We represent it as a failed/done empty with started_at "" so the route can
+  // detect "no such run". (readRunStatus stays the 404 oracle; this is a backstop.)
+  const startedAt = stamp?.started_at ?? "";
+  const startedMs = startedAt ? Date.parse(startedAt) : 0;
+
+  // run-log.json — the orchestrator's stage track + outcome + cap.
+  let runLog: RunLogShape | undefined;
+  let runLogMtimeMs = 0;
+  try {
+    runLog = JSON.parse(await readFile(join(runDir, "run-log.json"), "utf8")) as RunLogShape;
+    try {
+      runLogMtimeMs = (await stat(join(runDir, "run-log.json"))).mtimeMs;
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    runLog = undefined;
+  }
+
+  // progress.jsonl — the soft activity tail (best-effort, may be absent).
+  let latestActivity: string | null = null;
+  let progressMtimeMs = 0;
+  try {
+    const body = await readFile(join(runDir, "progress.jsonl"), "utf8");
+    const tail = tailProgressLine(body);
+    latestActivity = tail?.detail ?? null;
+    try {
+      progressMtimeMs = (await stat(join(runDir, "progress.jsonl"))).mtimeMs;
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    latestActivity = null; // graceful degrade — no activity line, never broken
+  }
+
+  // Artifact fill signal (count fresh artifact.json since started_at).
+  const artifactsProduced = startedMs > 0 ? await countArtifactsSince(artifactsDir, startedMs) : 0;
+
+  // ---- terminal / status resolution -------------------------------------
+  const stampStatus = (stamp?.status ?? "").toLowerCase();
+  const runLogOutcome = (runLog?.outcome ?? "").toLowerCase();
+  const runLogStatus = (runLog?.status ?? "").toLowerCase();
+
+  const isFailed =
+    stampStatus === "failed" ||
+    stampStatus === "aborted" ||
+    runLogOutcome === "aborted" ||
+    runLogStatus === "failed" ||
+    runLogStatus === "aborted";
+  const isDone = runLogOutcome === "completed" || runLogStatus === "completed" || runLogStatus === "done";
+
+  let status: ProgressStatus;
+  if (isFailed) status = "failed";
+  else if (isDone) status = "done";
+  else status = "running";
+
+  // Staleness: only meaningful while still "running". The freshest signal mtime
+  // (run-log, progress.jsonl, status stamp) plus the start time bound how long
+  // we've gone without movement. If artifacts are still appearing the count read
+  // is implicitly fresh, so we also consider a recent artifact as liveness by
+  // re-reading nothing extra — startedMs is the floor.
+  if (status === "running") {
+    const freshest = Math.max(runLogMtimeMs, progressMtimeMs, stampMtimeMs, startedMs);
+    if (freshest > 0 && nowMs - freshest > STALE_AFTER_MS) {
+      status = "stalled";
+    }
+  }
+
+  const runIsTerminal = status === "done" || status === "failed";
+  const { stages, current } = buildStages(runLog?.steps, runIsTerminal);
+
+  return {
+    run_id: runId,
+    status,
+    stages,
+    current_stage: current,
+    artifacts_produced: artifactsProduced,
+    cap: typeof runLog?.cap === "number" ? runLog.cap : DEFAULT_RUN_CAP,
+    drafts_produced: runLog?.drafts_produced?.length ?? 0,
+    latest_activity: latestActivity,
+    started_at: startedAt,
+    elapsed_ms: startedMs > 0 ? Math.max(0, nowMs - startedMs) : 0,
+    done: runIsTerminal,
+    dry_run: runLog?.dry_run ?? stamp?.dry_run ?? false,
+    artifacts_published: runLog?.artifacts_published ?? [],
   };
 }
 

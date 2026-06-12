@@ -223,7 +223,15 @@ else
   # Full headless run. The system prompt fully overrides the default (clean
   # run); the user message points the agent at SKILL.md. The orchestrator
   # (feed-run.ts) is the deterministic spine the agent drives.
-  SYSTEM_PROMPT="You are the distillery feed-run agent, invoked headlessly. Execute harness/feed-run/SKILL.md exactly. Judgment is yours; the orchestrator does the deterministic plumbing (index, distill aggregation, query, brief). FIRST, before generating anything, close the preference loop per harness/distill-preferences/SKILL.md: read the brief's embedded feedback summary + the reacted-to artifacts and update ONLY the [learned] bullets in PREFERENCES.md (never touch human-authored lines; >=2 consistent signals before a generalization; cite evidence counts), then re-read PREFERENCES.md. THEN run the artifact skills with the MANDATORY adversarial novelty critic, respect MAX_ARTIFACTS_PER_RUN, publish survivors to artifacts/, and append the surfaced ledger. Quality beats quantity — zero artifacts is a valid run."
+  # PROGRESS MARKERS (soft UI signal — best-effort, NON-FATAL). The agent appends
+  # one JSON line per significant step to index/runs/$RUN_ID/progress.jsonl so the
+  # Generate UI can show a live activity line. The deterministic stage track
+  # (run-log.json) + artifact count work WITHOUT this — markers only enrich. If
+  # the file/dir is unavailable the agent must SILENTLY skip it and keep working.
+  PROGRESS_FILE="$REPO/index/runs/${FEEDRUN_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}/progress.jsonl"
+  PROGRESS_NOTE="PROGRESS MARKERS (optional, never block on these): as you work, append ONE JSON line per significant step to ${PROGRESS_FILE} in the form {\"ts\":\"<iso8601>\",\"detail\":\"<short present-tense note>\"} — e.g. \"surveying transcripts\", \"drafting insight-card\", \"critic pass\", \"verifying quotes\", \"running banger-extractor\", \"running investor-snippet\", \"saved: <slug>\". One line per step, no transcript content, keep details under ~8 words. This is a soft progress signal only; if the file cannot be written, skip it silently and continue — never fail the run over a marker."
+
+  SYSTEM_PROMPT="You are the distillery feed-run agent, invoked headlessly. Execute harness/feed-run/SKILL.md exactly. Judgment is yours; the orchestrator does the deterministic plumbing (index, distill aggregation, query, brief). FIRST, before generating anything, close the preference loop per harness/distill-preferences/SKILL.md: read the brief's embedded feedback summary + the reacted-to artifacts and update ONLY the [learned] bullets in PREFERENCES.md (never touch human-authored lines; >=2 consistent signals before a generalization; cite evidence counts), then re-read PREFERENCES.md. THEN run the artifact skills with the MANDATORY adversarial novelty critic, respect MAX_ARTIFACTS_PER_RUN, publish survivors to artifacts/, and append the surfaced ledger. Quality beats quantity — zero artifacts is a valid run. ${PROGRESS_NOTE}"
   if [[ -f "$SCRIPT_DIR/feedrun.system.md" ]]; then
     SYSTEM_PROMPT="$(cat "$SCRIPT_DIR/feedrun.system.md")"
   fi
