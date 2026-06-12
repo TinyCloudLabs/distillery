@@ -40,6 +40,7 @@
 // → recency-only. All step outcomes append to a structured run log.
 
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { readIndex } from "../../index-corpus/scripts/corpus-index.ts";
@@ -217,34 +218,37 @@ const progressLogPath = join(progressRunDir, "run-log.json");
 // and keep the authoritative full write in finish(). The partial carries the
 // in-flight steps[] (+ run_id/mode/dry_run/cap) with NO terminal `outcome`, so
 // the endpoint reads it as still-running (isDone keys off outcome:"completed").
+//
+// The writes are SYNCHRONOUS on purpose: the pipeline's long steps run under
+// spawnSync, which blocks the event loop — an async fire-and-forget write
+// queued just before one would not flush until that step FINISHED, i.e. the
+// partial would land exactly when it stops being useful. A sync write
+// happens-before the blocking step and makes ordering trivial (no chain).
+// Payload is a few KB; cost is sub-ms.
 let runDirReady = false;
-// Serialize progress writes (and the final finish() write) onto one chain so a
-// fire-and-forget partial can never rename-clobber a later, more-complete write.
-let progressChain: Promise<void> = Promise.resolve();
-function persistProgress(): Promise<void> {
-  // Snapshot the steps SYNCHRONOUSLY so the serialized body reflects the state
-  // at call time (steps[] keeps growing after this returns).
-  const body =
-    JSON.stringify(
-      { run_id: runId, mode, dry_run: dryRun, cap, steps: steps.slice() },
-      null,
-      2,
-    ) + "\n";
-  progressChain = progressChain.then(async () => {
-    try {
-      if (!runDirReady) {
-        await mkdir(progressRunDir, { recursive: true });
-        runDirReady = true;
-      }
-      const tmp = `${progressLogPath}.tmp`;
-      await writeFile(tmp, body);
-      await rename(tmp, progressLogPath);
-    } catch {
-      // Best-effort progress view — a write failure must NEVER fail the run. The
-      // authoritative run-log is still written by finish().
+function writePartial(stepsSnapshot: ReadonlyArray<StepLog | ActiveStep>): void {
+  try {
+    if (!runDirReady) {
+      mkdirSync(progressRunDir, { recursive: true });
+      runDirReady = true;
     }
-  });
-  return progressChain;
+    const body =
+      JSON.stringify(
+        { run_id: runId, mode, dry_run: dryRun, cap, steps: stepsSnapshot },
+        null,
+        2,
+      ) + "\n";
+    const tmp = `${progressLogPath}.tmp`;
+    writeFileSync(tmp, body);
+    renameSync(tmp, progressLogPath);
+  } catch {
+    // Best-effort progress view — a write failure must NEVER fail the run. The
+    // authoritative run-log is still written by finish().
+  }
+}
+
+function persistProgress(): void {
+  writePartial(steps.slice());
 }
 
 // Persist a partial run-log where `step` is marked `active` (in-flight) ON TOP of
@@ -254,34 +258,10 @@ function persistProgress(): Promise<void> {
 // typed steps[] — the real terminal generate outcome is log()'d when runGeneration
 // returns. The endpoint's buildStages reads `active` directly; the value never
 // reaches the authoritative finish() run-log.
-function markActive(step: PipelineStep, detail: string): Promise<void> {
+type ActiveStep = { step: PipelineStep; status: "active"; detail: string };
+function markActive(step: PipelineStep, detail: string): void {
   console.error(`[feed-run] ${step}: active${detail ? ` — ${detail}` : ""}`);
-  const body =
-    JSON.stringify(
-      {
-        run_id: runId,
-        mode,
-        dry_run: dryRun,
-        cap,
-        steps: [...steps, { step, status: "active", detail }],
-      },
-      null,
-      2,
-    ) + "\n";
-  progressChain = progressChain.then(async () => {
-    try {
-      if (!runDirReady) {
-        await mkdir(progressRunDir, { recursive: true });
-        runDirReady = true;
-      }
-      const tmp = `${progressLogPath}.tmp`;
-      await writeFile(tmp, body);
-      await rename(tmp, progressLogPath);
-    } catch {
-      /* best-effort */
-    }
-  });
-  return progressChain;
+  writePartial([...steps, { step, status: "active", detail }]);
 }
 
 const steps: StepLog[] = [];
@@ -289,16 +269,15 @@ const log = (step: StepLog["step"], status: StepStatus, detail: string): void =>
   steps.push({ step, status, detail });
   console.error(`[feed-run] ${step}: ${status}${detail ? ` — ${detail}` : ""}`);
   // Persist the partial run-log after each step so a poller sees stages advance
-  // in real time (fire-and-forget; ordering is preserved because each call
-  // serializes a snapshot of the same growing steps[] array).
-  void persistProgress();
+  // in real time (synchronous — see writePartial for why).
+  persistProgress();
 };
 
 // t=0 WRITE: materialize the run dir + an (empty-steps) run-log within the first
 // second of the run, BEFORE any pipeline step, so a poller never sees an empty
 // "is it alive?" gap — the stage track renders index→…→save all-pending/active
 // immediately, and a dead run is distinguishable from a healthy one faster.
-void persistProgress();
+persistProgress();
 
 /** Shell a deterministic skill script. Returns ok + captured stdout/stderr. */
 function runScript(argv: string[]): { ok: boolean; stdout: string; stderr: string } {
@@ -336,7 +315,6 @@ async function finish(
   // chain this onto the same serial queue so a late partial can never
   // rename-clobber this final, terminal-outcome write.
   const runDir = progressRunDir;
-  await progressChain;
   await mkdir(runDir, { recursive: true });
   const finalTmp = `${progressLogPath}.tmp`;
   await writeFile(finalTmp, JSON.stringify(full, null, 2) + "\n");
@@ -673,7 +651,7 @@ if (dryRun) {
   // minutes). The UI shows "Generating…" + the artifact count fills within this
   // window. The real terminal generate status is log()'d below once the agent
   // returns; markActive does NOT push a non-terminal status into steps[].
-  await markActive(
+  markActive(
     "generate",
     `invoking headless generation agent (claude -p, model ${model}) against the brief`,
   );

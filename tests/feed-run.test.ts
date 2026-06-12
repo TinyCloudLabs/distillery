@@ -490,7 +490,10 @@ describe("feed-run CLI (e2e, synthetic corpus)", () => {
     let sawIncremental = false;
     let sawEmptyT0 = false;
     const observed: string[] = [];
-    const deadline = Date.now() + 8000;
+    // Generous: under full-suite parallelism the child's bun boot alone can
+    // eat several seconds before the index step ever runs. The break below
+    // fires the moment the partial is visible, so the common case stays fast.
+    const deadline = Date.now() + 25_000;
     while (Date.now() < deadline) {
       try {
         const j = JSON.parse(await readFile(logPath, "utf8")) as {
