@@ -220,6 +220,20 @@ describe("renderBrief", () => {
     expect(md).toContain("PRE-distill snapshot");
   });
 
+  // GENERATION BACKPRESSURE (phase 2B): the brief MANDATES that PREFERENCES.md
+  // steer topic/format/depth — bias toward loves, promote = commission, less =
+  // suppression — while still honoring the exploration reserve + novelty critic.
+  test("mandates generation backpressure: bias / commission / suppression / reserve", () => {
+    const md = renderBrief(base);
+    expect(md).toContain("GENERATION BACKPRESSURE");
+    expect(md).toContain("CONTROL VALVE");
+    expect(md).toContain("COMMISSION"); // promote = expand into a deeper artifact
+    expect(md).toContain("SUPPRESSION"); // less / already_knew = drop the lead
+    expect(md).toContain("exploration reserve"); // discovery channel still binds
+    expect(md).toContain("novelty critic"); // preference never resurrects a non-novel angle
+    expect(md).toContain("strategic-thesis"); // worked example tied to the real panel
+  });
+
   test("embeds the captured feedback summary when distill aggregation ran", () => {
     const md = renderBrief({
       ...base,
@@ -268,7 +282,7 @@ describe("run-log summary + topic keys", () => {
 });
 
 describe("pipeline step order constant", () => {
-  test("steps are index → distill → query → brief → generate → save", () => {
+  test("steps are index → distill → query → brief → generate → guard → verify-distill → save", () => {
     expect(PIPELINE_STEPS).toEqual([
       "index",
       "distill",
@@ -276,6 +290,8 @@ describe("pipeline step order constant", () => {
       "query-deepdive",
       "brief",
       "generate",
+      "guard",
+      "verify-distill",
       "save",
     ]);
   });

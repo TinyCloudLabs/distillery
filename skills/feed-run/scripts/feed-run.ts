@@ -63,6 +63,7 @@ import {
   orderedDeepDivePaths,
   parseRelativeSince,
   rankDeepDiveCandidates,
+  rankRecencyByPreference,
   renderBrief,
   resolveSince,
   summarizeRun,
@@ -71,6 +72,10 @@ import {
   type StepLog,
   type StepStatus,
 } from "./feed-run-lib.ts";
+import {
+  parsePreferenceSignal,
+  hasSignal,
+} from "../../query-corpus/scripts/preference-signal.ts";
 
 // ---------------------------------------------------------------------------
 // argv
@@ -221,6 +226,9 @@ async function finish(
     deepdive_path: extras.deepdive_path,
     deepdive_wrapped: extras.deepdive_wrapped ?? false,
     artifacts_published: extras.artifacts_published ?? [],
+    distill_skipped: extras.distill_skipped,
+    distill_pending_events: extras.distill_pending_events,
+    guard: extras.guard,
     outcome,
     finished_at: new Date().toISOString(),
   };
@@ -352,7 +360,7 @@ const recencyResult: QueryResult = queryCorpus(index, baseline, ledger, {
   unsurfacedOnly: true,
   limit: recencyLimit,
 });
-const recency: QueryMatch[] = recencyResult.matches;
+let recency: QueryMatch[] = recencyResult.matches;
 log(
   "query-recency",
   recency.length > 0 ? "ok" : "skipped",
@@ -360,6 +368,43 @@ log(
     ? `${recency.length} new transcript(s) since ${since}`
     : `recency window empty since ${since} — deep-dive-only run`,
 );
+
+// SELECTION BACKPRESSURE (spec phase 2A): re-rank the RECENCY pool by the
+// [learned] preference signal so transcripts matching Hunter's loves rise and
+// his dislikes sink. DETERMINISTIC + model-free (parsePreferenceSignal +
+// scorePreferenceMatch are pure index-only keyword tallies). The deep-dive
+// cursor below is DELIBERATELY left preference-agnostic — that's the
+// exploration reserve (see feed-run-lib.ts rankRecencyByPreference doc). We log
+// the weighting transparently: every candidate that moved carries its keyword
+// hits. (Preferences read here are the PRE-distill panel; the agent's distill
+// updates [learned] lines for the NEXT run's selection — selection backpressure
+// is one run behind generation backpressure, by construction.)
+// NB: this is TRANSPARENCY logging on the same `query-recency` step (stderr
+// only) — it deliberately does NOT push another StepLog, so the pipeline step
+// sequence stays singular (index → distill → query-recency → query-deepdive →
+// …). The weighting reorders `recency` in place for the brief.
+const prefSignal = parsePreferenceSignal(preferences);
+if (recency.length > 0 && hasSignal(prefSignal)) {
+  const recordByPath = new Map(index.transcripts.map((r) => [r.path, r]));
+  const rankedRecency = rankRecencyByPreference(
+    recency,
+    prefSignal,
+    (p) => recordByPath.get(p),
+  );
+  recency = rankedRecency.map((r) => r.match);
+  const moved = rankedRecency.filter((r) => r.preferenceScore !== 0);
+  console.error(
+    `[feed-run] query-recency: preference-weighted — ${prefSignal.loved.size} loved + ` +
+      `${prefSignal.disliked.size} disliked keyword(s); ` +
+      `${moved.length}/${rankedRecency.length} candidate(s) moved by preference`,
+  );
+  // Per-candidate transparency (why each ranked where) — to stderr.
+  for (const r of rankedRecency) {
+    console.error(`[feed-run]   recency rank: ${r.match.title ?? r.match.path} — ${r.rationale}`);
+  }
+} else if (recency.length > 0) {
+  console.error("[feed-run] query-recency: preference signal empty — recency order unchanged (newest-first)");
+}
 
 // 3b. QUERY — deep-dive: ONE high-novelty, never-surfaced older thread past the
 //     cursor; advance the cursor. No eligible candidate → recency-only run.
@@ -425,6 +470,12 @@ log("brief", "ok", `brief prepared (${recency.length} recency + ${deepDive ? 1 :
 const runDir = join(runsDir, runId.replace(/[:]/g, "-"));
 const briefPath = join(runDir, "run-brief.md");
 let artifactsPublished: string[] = [];
+// PR #8 review enforcement (findings A + B): the human-line guard outcome and
+// the distill-skipped flag for the run-log. Undefined unless a real agent
+// distill ran (set in the real-generation branch below).
+let guardOutcome: "ok" | "violation" | undefined;
+let distillSkipped: boolean | undefined;
+let distillPendingEvents: number | undefined;
 
 // Persist the advanced cursor authoritatively whenever we are NOT a dry-run
 // (both real generation AND --no-generate own the cursor; only --dry-run
@@ -461,6 +512,26 @@ if (dryRun) {
   await mkdir(runDir, { recursive: true });
   await writeFile(briefPath, brief);
 
+  // FINDING A — DETERMINISTIC HUMAN-LINE GUARD. Snapshot PREFERENCES.md BEFORE
+  // the agent touches it (the agent's distill task #1 happens inside the
+  // generation call). After the agent writes we ASSERT no human (non-[learned])
+  // line changed and RESTORE the file if one did. Snapshot lives in the run dir
+  // so it never collides with a concurrent run.
+  const guardSnapshot = join(runDir, "preferences-guard-snapshot.md");
+  const snap = runScript([
+    "skills/distill-preferences/scripts/guard-preferences.ts",
+    "snapshot",
+    "--preferences",
+    preferencesPath,
+    "--snapshot",
+    guardSnapshot,
+  ]);
+  if (!snap.ok) {
+    // Snapshot is cheap and should not fail; if it does, log and proceed
+    // unguarded rather than abort the whole run (the run still produces value).
+    log("guard", "degraded", `pre-distill snapshot failed: ${lastLine(snap.stderr)}`);
+  }
+
   const model = resolveModel(modelArg, process.env);
   log(
     "generate",
@@ -477,6 +548,70 @@ if (dryRun) {
       runId,
       logPath: join(runDir, "generation-log.txt"),
     });
+
+    // FINDING A — CHECK. The agent has written; assert the human lines survived.
+    // A violation RESTORES PREFERENCES.md from the snapshot (the CLI does it)
+    // and we record guard=violation in the run-log.
+    if (snap.ok) {
+      const check = runScript([
+        "skills/distill-preferences/scripts/guard-preferences.ts",
+        "check",
+        "--preferences",
+        preferencesPath,
+        "--snapshot",
+        guardSnapshot,
+      ]);
+      if (check.ok) {
+        guardOutcome = "ok";
+        log("guard", "ok", "human (non-[learned]) lines intact after distill");
+      } else {
+        guardOutcome = "violation";
+        log(
+          "guard",
+          "failed",
+          `human line changed by distill — PREFERENCES.md RESTORED from snapshot. ${lastLine(check.stderr)}`,
+        );
+      }
+    }
+
+    // FINDING B — POST-RUN DISTILL VERIFICATION. Confirm the distill actually
+    // happened: if there are new feedback events since the last distill, the
+    // [learned] section must have changed OR the agent must have logged an
+    // explicit "no change warranted". Otherwise flag distill_skipped=true.
+    const verify = runScript([
+      "skills/distill-preferences/scripts/verify-distill.ts",
+      "--run-id",
+      runId,
+      "--events",
+      "feedback/events.jsonl",
+      "--preferences",
+      preferencesPath,
+      "--cursor",
+      "index/distill-cursor.json",
+      "--distill-log",
+      join(runDir, "generation-log.txt"),
+    ]);
+    if (verify.ok) {
+      try {
+        const v = JSON.parse(verify.stdout.trim().split("\n").pop() ?? "{}") as {
+          distill_skipped?: boolean;
+          pending_events?: number;
+          detail?: string;
+        };
+        distillSkipped = v.distill_skipped === true;
+        distillPendingEvents = v.pending_events;
+        log(
+          "verify-distill",
+          distillSkipped ? "degraded" : "ok",
+          v.detail ?? (distillSkipped ? "distill skipped with pending events" : "distill verified"),
+        );
+      } catch {
+        log("verify-distill", "degraded", `could not parse verification output: ${lastLine(verify.stdout)}`);
+      }
+    } else {
+      log("verify-distill", "degraded", `verification failed: ${lastLine(verify.stderr)}`);
+    }
+
     artifactsPublished = summary.created.map((c) => `${c.type}/${c.slug}`);
     log(
       "generate",
@@ -504,6 +639,9 @@ const finalLog = await finish(
     deepdive_path: deepDive?.path,
     deepdive_wrapped: advance.wrapped,
     artifacts_published: artifactsPublished,
+    distill_skipped: distillSkipped,
+    distill_pending_events: distillPendingEvents,
+    guard: guardOutcome,
   },
   brief,
 );

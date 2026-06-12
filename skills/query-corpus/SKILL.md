@@ -139,10 +139,39 @@ entity/term itself) — never a transcript re-read.
 `--format md` renders the same data as a readable report (same convention as
 `novelty-scan`).
 
+## Selection backpressure — the preference signal (spec phase 2A)
+
+`scripts/preference-signal.ts` makes PREFERENCES.md a **control valve on
+selection**, not just generation. It is DETERMINISTIC and model-free (a
+regex/keyword parse + an additive score — same plumbing stance as the rest of
+this skill):
+
+- `parsePreferenceSignal(markdown)` reads ONLY the `- [learned]` bullets,
+  partitions them into **loved** (Topics/Style/Formats, or any `more` / `keep` /
+  `promote` / `landing` wording) vs **disliked** (Novelty-bar, or any `less` /
+  `skip` / `already_knew` / `table stakes` wording), strips the trailing
+  evidence parens, harvests stopword-filtered keywords (incl. hyphenated handles
+  like `single-voice-thesis`), and tallies per-keyword weights. A keyword that
+  is both loved and disliked is dropped from both (neutral). **Human (untagged)
+  lines never feed the signal** — they steer via the agent's judgment
+  downstream, not the deterministic ranker.
+- `scorePreferenceMatch(record, signal)` scores one index record (title +
+  entities + terms, no transcript re-read): each loved-keyword hit ADDS its
+  weight, each disliked-keyword hit SUBTRACTS it, and every hit records WHERE it
+  matched for transparent logging.
+
+**Where it is wired (the anti-filter-bubble split).** The **feed-run recipe**
+uses this to re-rank the **recency pool** (`rankRecencyByPreference` in
+`feed-run-lib.ts`) so preference-matching new transcripts rise. The **rotating
+deep-dive cursor is left preference-AGNOSTIC** — the exploration reserve for
+asymmetric knowledge. The signal is deliberately never wired into
+`rankDeepDiveCandidates`. See `skills/feed-run/SKILL.md` → Backpressure.
+
 ## Consumers
 
 - The **feed-run recipe** runs `query-corpus --since <last_run> --unsurfaced-only`
-  for the recency window, and `--unsurfaced-only` (no window) to build the
-  deep-dive candidate set it feeds to `advanceCursor`.
+  for the recency window (then preference-weights it — see above), and
+  `--unsurfaced-only` (no window) to build the deep-dive candidate set it feeds
+  to `advanceCursor`.
 - After a run it appends to `index/surfaced.json` (path, topic_keys, outcome,
   mode, content_hash) and persists the advanced `deepdive_cursor`.

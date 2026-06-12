@@ -18,6 +18,10 @@
 import type { CorpusIndex, IndexRecord } from "../../index-corpus/scripts/corpus-index.ts";
 import type { QueryMatch } from "../../query-corpus/scripts/corpus-query.ts";
 import type { SurfacedMode } from "../../query-corpus/scripts/surfaced-ledger.ts";
+import {
+  scorePreferenceMatch,
+  type PreferenceSignal,
+} from "../../query-corpus/scripts/preference-signal.ts";
 
 /** Run mode. `daily` is the heartbeat; `backfill` is the one-time excavation. */
 export type RunMode = "daily" | "backfill";
@@ -30,6 +34,12 @@ export const PIPELINE_STEPS = [
   "query-deepdive",
   "brief",
   "generate",
+  // PR #8 review: the loop is ENFORCED, not instruction-only. `guard` is the
+  // deterministic human-line guard around the agent's distill write (finding
+  // A); `verify-distill` is the post-run check that the distill actually
+  // happened (finding B). Both run after the agent's distill task.
+  "guard",
+  "verify-distill",
   "save",
 ] as const;
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
@@ -75,6 +85,24 @@ export interface RunLog {
   deepdive_wrapped: boolean;
   /** Artifacts actually published (empty on dry-run / zero-artifact run). */
   artifacts_published: string[];
+  /**
+   * DETERMINISTIC distill verification (PR #8 finding B): true when the agent's
+   * mandated distill was SKIPPED despite pending feedback events (no [learned]
+   * change + no explicit "no change warranted" log). The run still completes,
+   * but this flags that the feed did not learn — never a silent pass. Undefined
+   * on dry-run / --no-generate (no agent distill ran to verify).
+   */
+  distill_skipped?: boolean;
+  /** Count of pending feedback events at verification time (finding B). */
+  distill_pending_events?: number;
+  /**
+   * DETERMINISTIC human-line guard outcome (PR #8 finding A): "ok" when every
+   * human (non-[learned]) line survived the distill; "violation" when the agent
+   * edited/removed/reordered a human line and PREFERENCES.md was RESTORED from
+   * the pre-distill snapshot. Undefined when no agent distill ran (dry-run /
+   * --no-generate).
+   */
+  guard?: "ok" | "violation";
   /** Final run status: completed (incl. zero-artifact), or aborted (index failed). */
   outcome: "completed" | "aborted";
   finished_at: string;
@@ -188,6 +216,81 @@ export function orderedDeepDivePaths(rankedCandidates: IndexRecord[]): string[] 
   return rankedCandidates.map((r) => r.path);
 }
 
+// ---------------------------------------------------------------------------
+// SELECTION BACKPRESSURE — preference-weighted recency ranking (spec phase 2A)
+// ---------------------------------------------------------------------------
+//
+// PREFERENCES.md is a CONTROL VALVE on selection, not just generation. The
+// recency pool (the daily "what's new" channel) is re-ranked so transcripts
+// matching Hunter's [learned] loves rise and his [learned] dislikes sink —
+// shaping the feed toward him over time. DETERMINISTIC, model-free (the score
+// comes from preference-signal.ts, an index-only keyword tally).
+//
+// THE ANTI-FILTER-BUBBLE SPLIT (deliberate, load-bearing):
+//   - RECENCY pool        → preference-WEIGHTED (here). It's the channel that
+//                           should track Hunter's tastes.
+//   - DEEP-DIVE cursor    → preference-AGNOSTIC (rankDeepDiveCandidates above is
+//                           untouched). It's the DISCOVERY reserve for
+//                           asymmetric knowledge he doesn't yet know he wants.
+// Weighting both would collapse the feed into an echo chamber, so the deep-dive
+// is intentionally NOT preference-weighted. This split is the exploration
+// reserve, enforced by which function the signal is wired into.
+//
+// The ranking is STABLE and TRANSPARENT: preference score is the primary key,
+// the original recency order (newest-first, the input order) is the tiebreak,
+// and every candidate carries the loved/disliked keyword hits that moved it so
+// the recipe can LOG why each ranked where it did.
+
+/** One recency candidate after preference weighting — carries its rationale. */
+export interface RankedRecencyMatch {
+  match: QueryMatch;
+  /** Net preference score (loved hits − disliked hits, weighted). 0 = neutral. */
+  preferenceScore: number;
+  /** Human-readable "why it moved" line (keyword hits), for transparent logging. */
+  rationale: string;
+}
+
+/**
+ * Re-rank the recency matches by preference score (PRIMARY), preserving the
+ * incoming newest-first order as the deterministic tiebreak (SECONDARY). The
+ * incoming `matches` are already query-corpus's newest-first output, so a neutral
+ * signal (no loved/disliked hits anywhere) returns them UNCHANGED — backpressure
+ * shapes, it never reorders without evidence.
+ *
+ * `lookup` maps a match path → its index record (preference scoring needs the
+ * record's entities/terms/title). A path with no record scores neutral (0).
+ *
+ * NO model calls; pure over the supplied signal + records. Returns each match
+ * wrapped with its score + a rationale string so feed-run.ts can log the
+ * weighting transparently (the spec's "log why each candidate ranked where").
+ */
+export function rankRecencyByPreference(
+  matches: QueryMatch[],
+  signal: PreferenceSignal,
+  lookup: (path: string) => IndexRecord | undefined,
+): RankedRecencyMatch[] {
+  const ranked = matches.map((match, originalIndex): RankedRecencyMatch & { originalIndex: number } => {
+    const record = lookup(match.path);
+    if (!record) {
+      return { match, preferenceScore: 0, rationale: "neutral (no index record)", originalIndex };
+    }
+    const s = scorePreferenceMatch(record, signal);
+    const loved = s.lovedHits.map((h) => `+${h.keyword}(${h.weight})@${h.where}`);
+    const disliked = s.dislikedHits.map((h) => `-${h.keyword}(${h.weight})@${h.where}`);
+    const parts = [...loved, ...disliked];
+    const rationale =
+      parts.length > 0
+        ? `score ${s.score >= 0 ? "+" : ""}${s.score}: ${parts.join(", ")}`
+        : "neutral (no preference keywords matched)";
+    return { match, preferenceScore: s.score, rationale, originalIndex };
+  });
+
+  // Stable sort: higher preference score first; ties keep the original
+  // (newest-first) recency order via the captured original index.
+  ranked.sort((a, b) => b.preferenceScore - a.preferenceScore || a.originalIndex - b.originalIndex);
+  return ranked.map(({ match, preferenceScore, rationale }) => ({ match, preferenceScore, rationale }));
+}
+
 export interface BriefInput {
   runId: string;
   mode: RunMode;
@@ -245,6 +348,57 @@ export function renderBrief(b: BriefInput): string {
       " illustrate-card), each with its own novelty-scan + adversarial critic." +
       ` Publish at most **${b.cap}** survivors. Zero artifacts is a valid run` +
       " — quality beats quantity.",
+  );
+  out.push("");
+  out.push("## GENERATION BACKPRESSURE — PREFERENCES.md STEERS what you make (MANDATORY)");
+  out.push("");
+  out.push(
+    "PREFERENCES.md is a CONTROL VALVE on generation, not a passive journal." +
+      " After Task #1 (re-read the freshly-distilled file), you MUST let its" +
+      " `[learned]` lines steer topic, format, and depth — this is not" +
+      " optional 'consideration', it is a directive:",
+  );
+  out.push("");
+  out.push(
+    "1. **BIAS toward `[learned]` loves.** Where a recency/deep-dive transcript" +
+      " carries a topic/format/style a `[learned]` line favors, LEAN IN: pick" +
+      " that angle, that format, that depth over an equally-novel alternative" +
+      " the panel is silent on. The deterministic selection ranker already" +
+      " floated preference-matching recency candidates up; your generation" +
+      " choice must echo the same bias.",
+  );
+  out.push(
+    "2. **Treat `promote` signals as a COMMISSION.** A `[learned]` line that a" +
+      " card/topic/format earned a promote is a STANDING ORDER to expand that" +
+      " thread into a DEEPER artifact when the material supports it — e.g. a" +
+      " promoted insight-card's topic becomes an article or a micro-podcast" +
+      " this run. Promotion is a queue of deeper-artifact commissions, not a" +
+      " compliment.",
+  );
+  out.push(
+    "3. **Treat `less` / `already_knew` signals as active SUPPRESSION.** A" +
+      " `[learned]` line marking a lead/topic below the bar or unwanted means" +
+      " do NOT generate that lead this run, even if a transcript surfaces it" +
+      " — drop it and spend the cap elsewhere.",
+  );
+  out.push(
+    "4. **The exploration reserve + novelty critic STILL bind.** Backpressure" +
+      " shapes; it never overrides 'is this genuinely novel?'. The rotating" +
+      " deep-dive thread is the discovery channel — generate from it on its" +
+      " own merits even when it matches NO preference (that's how the feed" +
+      " surfaces asymmetric knowledge Hunter doesn't yet know he wants). And a" +
+      " preference-matching lead that fails the adversarial novelty critic is" +
+      " still killed: preference never resurrects a non-novel angle.",
+  );
+  out.push("");
+  out.push(
+    "Worked example (tied to the current panel): a `[learned]` Style line favors" +
+      " *single-voice strategic-thesis* cards and `[learned]` Formats says" +
+      " single-voice-thesis cards EARN deeper artifacts (promote). So when a" +
+      " transcript below contains one person's strategic thesis no one echoes," +
+      " (a) prefer that lead over a generic multi-voice recap, and (b) if a prior" +
+      " such card was promoted, expand THIS one into an article/podcast rather" +
+      " than another card — unless the novelty critic kills it.",
   );
   out.push("");
   out.push("## TASK #1 (MANDATORY, BEFORE generating): close the preference loop");
@@ -360,7 +514,10 @@ export function summarizeRun(log: RunLog): string {
     `since=${log.since} cap=${log.cap} ` +
     `recency=${log.recency_paths.length} ` +
     `deepdive=${log.deepdive_path ? "1" : "0"}${log.deepdive_wrapped ? "(wrapped)" : ""} ` +
-    `published=${log.artifacts_published.length} outcome=${log.outcome}`
+    `published=${log.artifacts_published.length}` +
+    (log.guard ? ` guard=${log.guard}` : "") +
+    (log.distill_skipped ? " distill_skipped=true" : "") +
+    ` outcome=${log.outcome}`
   );
 }
 
