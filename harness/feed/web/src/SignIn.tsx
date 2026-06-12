@@ -11,7 +11,7 @@
 // also the SDK default. Styled with Folio's existing vocabulary (masthead /
 // feed-status / quiet-link); a bespoke sign-in treatment can follow up.
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { UNAUTHORIZED_EVENT } from "./auth.ts";
 
 const OPENKEY_HOST = "https://openkey.so";
@@ -20,6 +20,10 @@ type AuthState = "checking" | "authed" | "signedout";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>("checking");
+  // Mirror of `state` for the unauthorized handler, which is registered once
+  // and must read the *current* state without re-subscribing per transition.
+  const stateRef = useRef<AuthState>(state);
+  stateRef.current = state;
 
   // Re-confirm access against /auth/me. Runs once on mount, and again whenever
   // an api call (or sign-out) reports the session is dead — so an orphaned
@@ -39,7 +43,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const isAlive = () => alive;
     check(isAlive);
     // A 401 from any /api call (apiFetch) or an explicit sign-out fires this.
+    // Only react while authed: when the gate already shows (or is resolving)
+    // the sign-in screen, a straggler 401 — e.g. an in-flight poll from the
+    // unmounted feed — must not blank the screen back to "Checking access"
+    // mid-passkey-ceremony. That reset is what flickered.
     const onUnauthorized = () => {
+      if (stateRef.current !== "authed") return;
       setState("checking");
       check(isAlive);
     };
