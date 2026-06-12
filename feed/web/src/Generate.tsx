@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Glyph } from "./Card.tsx";
+import { apiFetch } from "./auth.ts";
 
 const POLL_MS = 4000;
 /** Give up polling after this long (the run keeps going server-side regardless). */
@@ -44,7 +45,7 @@ export function GenerateControl({ onComplete }: { onComplete?: () => void }) {
   const poll = useCallback(
     async (runId: string) => {
       try {
-        const res = await fetch(`/api/generate/${encodeURIComponent(runId)}`);
+        const res = await apiFetch(`/api/generate/${encodeURIComponent(runId)}`);
         if (!res.ok) throw new Error(`status ${res.status}`);
         const s = (await res.json()) as RunStatus;
         if (s.status === "done" || s.status === "aborted") {
@@ -71,7 +72,7 @@ export function GenerateControl({ onComplete }: { onComplete?: () => void }) {
     setState({ kind: "starting" });
     startedAt.current = Date.now();
     try {
-      const res = await fetch("/api/generate", {
+      const res = await apiFetch("/api/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({}), // daily, not dry — the real run

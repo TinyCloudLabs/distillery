@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Glyph } from "./Card.tsx";
+import { apiFetch } from "./auth.ts";
 
 const MAX_BYTES = 10 * 1024;
 
@@ -115,7 +116,7 @@ export function PreferencesPanel() {
   const load = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      const res = await fetch("/api/preferences");
+      const res = await apiFetch("/api/preferences");
       if (!res.ok) throw new Error(`api ${res.status}`);
       const etag = res.headers.get("etag") ?? "";
       setState({ kind: "view", text: await res.text(), etag });
@@ -132,7 +133,7 @@ export function PreferencesPanel() {
     if (state.kind !== "editing") return;
     setState({ ...state, saving: true, saveError: null });
     try {
-      const res = await fetch("/api/preferences", {
+      const res = await apiFetch("/api/preferences", {
         method: "PUT",
         headers: { "If-Match": state.etag },
         body: state.draft,

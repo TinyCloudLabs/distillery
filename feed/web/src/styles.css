@@ -83,7 +83,9 @@ button {
 .masthead-nav {
   display: flex;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 16px;
   flex: none;
 }
 
@@ -177,6 +179,29 @@ button.mono-chip::after {
   transform: translate(-50%, -50%);
   width: max(100%, 44px);
   height: 44px;
+}
+
+/* ---- narrow viewports: stack the masthead so the control row can wrap ----
+   At phone widths the title + (Preferences · Generate · Rescan · Sign out) row
+   won't fit side-by-side and the trailing control (Rescan/Sign out) gets cut
+   off. Drop the nav below the title and let it wrap across as many rows as it
+   needs — every control stays on-screen and keeps its ≥44px hit area. */
+@media (max-width: 460px) {
+  #root {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .masthead {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .masthead-nav {
+    justify-content: flex-start;
+    column-gap: 18px;
+  }
 }
 
 /* ---- feed states ---- */

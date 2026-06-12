@@ -9,7 +9,7 @@
 //      without needing a VERSION bump.
 // Bump VERSION on SW changes to drop old caches on activate.
 
-const VERSION = "folio-2";
+const VERSION = "folio-3";
 const SHELL_CACHE = `shell-${VERSION}`;
 const RUNTIME_CACHE = `runtime-${VERSION}`;
 

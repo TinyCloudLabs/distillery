@@ -11,7 +11,8 @@
 // also the SDK default. Styled with Folio's existing vocabulary (masthead /
 // feed-status / quiet-link); a bespoke sign-in treatment can follow up.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { UNAUTHORIZED_EVENT } from "./auth.ts";
 
 const OPENKEY_HOST = "https://openkey.so";
 
@@ -20,19 +21,34 @@ type AuthState = "checking" | "authed" | "signedout";
 export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>("checking");
 
-  useEffect(() => {
-    let alive = true;
+  // Re-confirm access against /auth/me. Runs once on mount, and again whenever
+  // an api call (or sign-out) reports the session is dead — so an orphaned
+  // session always surfaces the sign-in screen instead of a stranded feed.
+  const check = useCallback((alive: () => boolean) => {
     fetch("/auth/me")
       .then((res) => {
-        if (alive) setState(res.ok ? "authed" : "signedout");
+        if (alive()) setState(res.ok ? "authed" : "signedout");
       })
       .catch(() => {
-        if (alive) setState("signedout");
+        if (alive()) setState("signedout");
       });
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const isAlive = () => alive;
+    check(isAlive);
+    // A 401 from any /api call (apiFetch) or an explicit sign-out fires this.
+    const onUnauthorized = () => {
+      setState("checking");
+      check(isAlive);
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     return () => {
       alive = false;
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
     };
-  }, []);
+  }, [check]);
 
   if (state === "checking") {
     return (

@@ -1,6 +1,7 @@
 import { marked } from "marked";
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import type { FeedbackAction, FeedCard } from "../../src/types.ts";
+import { apiFetch } from "./auth.ts";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -285,7 +286,7 @@ export function FeedbackBar({
     try {
       const body: Record<string, string> = { artifact_id: card.id, action };
       if (noteText?.trim()) body.note = noteText.trim();
-      const res = await fetch("/api/feedback", {
+      const res = await apiFetch("/api/feedback", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),

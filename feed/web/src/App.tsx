@@ -3,6 +3,7 @@ import type { CardsResponse, FeedCard } from "../../src/types.ts";
 import { Card, FullCard, Glyph } from "./Card.tsx";
 import { PreferencesPanel } from "./Preferences.tsx";
 import { GenerateControl } from "./Generate.tsx";
+import { apiFetch, signOut } from "./auth.ts";
 
 const PAGE_SIZE = 20;
 const UNDO_MS = 8000;
@@ -156,7 +157,7 @@ function Feed({
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const fetchPage = useCallback(async (offset: number) => {
-    const res = await fetch(`/api/cards?limit=${PAGE_SIZE}&offset=${offset}`);
+    const res = await apiFetch(`/api/cards?limit=${PAGE_SIZE}&offset=${offset}`);
     if (!res.ok) throw new Error(`api ${res.status}`);
     return (await res.json()) as CardsResponse;
   }, []);
@@ -247,6 +248,13 @@ function Feed({
             onClick={() => void refresh()}
           >
             {loading ? "Scanning…" : "Rescan"}
+          </button>
+          <button
+            type="button"
+            className="quiet-link"
+            onClick={() => void signOut()}
+          >
+            Sign out
           </button>
         </nav>
       </header>
@@ -343,7 +351,7 @@ function ArticleView({
     let alive = true;
     setCard(null);
     setError(null);
-    fetch(`/api/cards/${encodeURIComponent(type)}/${encodeURIComponent(slug)}`)
+    apiFetch(`/api/cards/${encodeURIComponent(type)}/${encodeURIComponent(slug)}`)
       .then(async (res) => {
         if (!res.ok) throw new Error(res.status === 404 ? "artifact not found" : `api ${res.status}`);
         return (await res.json()) as FeedCard;
