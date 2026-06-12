@@ -16,7 +16,7 @@
 // All of THIS file is pure + side-effect-free at import time, so the tests can
 // assert the invocation shape WITHOUT ever calling claude or generating.
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, mkdir, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ArtifactType } from "../../_shared/lib/artifact.ts";
 import { ARTIFACT_TYPES } from "../../_shared/lib/artifact.ts";
@@ -103,10 +103,19 @@ export function buildSystemPrompt(input: GenInvocationInput): string {
     "   extract-insights (insight cards), write-article (longform), make-podcast",
     "   (micro-podcasts). Pick the format the material earns; not every",
     "   transcript yields an artifact.",
+    "3a. ONE SIGNAL → ONE ARTIFACT (in-run dedup, MANDATORY). Before you pick an",
+    "    angle for ANY new artifact, read (a) the surfaced ledger",
+    "    (index/surfaced.json) and (b) the artifacts you have ALREADY created in",
+    "    THIS run. If a signal/thread (e.g. a specific quantified-claim drift, a",
+    "    single-voice topic) is already used by a prior artifact OR by one you",
+    "    just made this run, SKIP it — do NOT make a second artifact (e.g. a card",
+    "    AND a podcast) on the same underlying signal, even in a different format.",
+    "    Across all formats, at most ONE artifact ships per underlying signal.",
+    "    Spend the cap on DISTINCT signals.",
     "4. Run each skill's baked-in novelty-scan + the MANDATORY adversarial",
-    "   novelty critic. Kill anything that re-angles a prior artifact or clears",
-    "   no novelty bar. ZERO artifacts is a valid, good run — quality beats",
-    "   quantity.",
+    "   novelty critic. Kill anything that re-angles a prior artifact, duplicates",
+    "   a signal already used this run, or clears no novelty bar. ZERO artifacts",
+    "   is a valid, good run — quality beats quantity.",
     `5. Publish at most ${input.cap} survivors with save.ts (auto-publish straight`,
     `   to ${input.artifactsDir}). One hero image per artifact at most.`,
     "6. After saving, append each EXAMINED transcript (shipped or not) to the",
@@ -229,6 +238,82 @@ export function diffCreated(before: ArtifactRef[], after: ArtifactRef[]): Artifa
 }
 
 /**
+ * Resolve a stable CREATION ORDER for a set of newly-created artifact refs:
+ * earliest first. The order key is the artifact.json's `generated_at` ISO field
+ * (the agent stamps it when it saves), falling back to the file's mtime, then
+ * the `<type>/<slug>` key for a deterministic tie-break. Pure-ish (reads mtime
+ * only when generated_at is absent). Never throws — an unreadable artifact sorts
+ * last by an empty key.
+ */
+export async function orderByCreation(refs: ArtifactRef[]): Promise<ArtifactRef[]> {
+  const keyed = await Promise.all(
+    refs.map(async (ref) => {
+      let order = "";
+      try {
+        const raw = await readFile(join(ref.dir, "artifact.json"), "utf8");
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (typeof parsed.generated_at === "string" && parsed.generated_at.trim()) {
+          order = parsed.generated_at;
+        }
+      } catch {
+        /* fall through to mtime */
+      }
+      if (!order) {
+        try {
+          order = (await stat(join(ref.dir, "artifact.json"))).mtime.toISOString();
+        } catch {
+          order = "";
+        }
+      }
+      return { ref, order };
+    }),
+  );
+  keyed.sort((a, b) => a.order.localeCompare(b.order) || a.ref.key.localeCompare(b.ref.key));
+  return keyed.map((k) => k.ref);
+}
+
+export interface CapEnforcement {
+  /** The refs kept in artifacts/ (the first `cap` by creation order). */
+  kept: ArtifactRef[];
+  /** The refs MOVED out of artifacts/ into the over-cap quarantine. */
+  quarantined: ArtifactRef[];
+  /** Absolute dir the excess was moved to (only set when something quarantined). */
+  quarantineDir?: string;
+}
+
+/**
+ * DETERMINISTICALLY enforce MAX_ARTIFACTS_PER_RUN (review Medium #3). The cap in
+ * the system prompt is advisory — a non-compliant or prompt-injected agent can
+ * write N+k artifacts and save.ts auto-publishes them. This is the structural
+ * backstop: after the before/after diff, if the agent created MORE than `cap`
+ * artifacts THIS run, keep the first `cap` by creation order and MOVE the excess
+ * out of `artifacts/` into `index/runs/<id>/over-cap/<type>/<slug>/` so they are
+ * no longer published. Returns what was kept vs quarantined for the run log.
+ *
+ * Only ever touches THIS run's newly-created artifacts (the diff result) — prior
+ * artifacts are never moved. A no-op when `created.length <= cap`.
+ */
+export async function enforceCap(
+  created: ArtifactRef[],
+  cap: number,
+  quarantineRoot: string,
+): Promise<CapEnforcement> {
+  if (created.length <= cap) {
+    return { kept: created, quarantined: [] };
+  }
+  const ordered = await orderByCreation(created);
+  const kept = ordered.slice(0, cap);
+  const excess = ordered.slice(cap);
+  const quarantineDir = join(quarantineRoot, "over-cap");
+  for (const ref of excess) {
+    const dest = join(quarantineDir, ref.type, ref.slug);
+    await mkdir(join(dest, ".."), { recursive: true });
+    await rename(ref.dir, dest);
+  }
+  return { kept, quarantined: excess, quarantineDir };
+}
+
+/**
  * Read a best-effort novelty value off an artifact.json. Looks for a top-level
  * `novelty` field, else a `quality.notes` string. Never throws (missing/garbage
  * → undefined). Provenance only — the summary tolerates its absence.
@@ -250,6 +335,175 @@ export async function readNovelty(artifactDir: string): Promise<number | string 
 }
 
 // ---------------------------------------------------------------------------
+// In-run dedup (the core upgrade — Hunter-approved)
+// ---------------------------------------------------------------------------
+//
+// THE PROBLEM: the generation agent runs multiple artifact-format passes
+// (extract-insights, write-article, make-podcast) inside ONE headless run. They
+// can't see each other's output, so two passes can land on the SAME underlying
+// signal — observed: a card AND a podcast both on the "$2M→100k fundraise drift".
+// One run should ship at most ONE artifact per underlying signal.
+//
+// APPROACH (option b, post-generation pass) — chosen because the runner spawns a
+// SINGLE agent, so it CANNOT interleave the agent's internal per-format passes
+// (option a needs separately-spawned sequential agents, which this architecture
+// doesn't have). Instead we detect same-signal artifacts AFTER the run by their
+// deterministic fingerprint and quarantine the lower-value duplicate. The system
+// prompt is ALSO hardened (read the ledger + already-created artifacts before
+// picking an angle) so the agent avoids the dup in the first place — the
+// post-pass is the structural backstop when it doesn't.
+
+/** The fingerprint that decides whether two artifacts cover the same signal. */
+export interface SignalFingerprint {
+  /** Sorted, normalized source_transcripts — the underlying material. */
+  sources: string[];
+  /** The novelty lead/topic the artifact claims (quality.notes / novelty), normalized. */
+  lead: string;
+}
+
+/** Normalize a transcript path for comparison (basename, lowercased, trimmed). */
+function normSource(p: string): string {
+  const base = p.split(/[\\/]/).pop() ?? p;
+  return base.trim().toLowerCase();
+}
+
+/** Pull the comparable signal fingerprint off an artifact.json. Never throws. */
+export async function readSignalFingerprint(artifactDir: string): Promise<SignalFingerprint> {
+  try {
+    const raw = await readFile(join(artifactDir, "artifact.json"), "utf8");
+    const a = JSON.parse(raw) as Record<string, unknown>;
+    const sources = Array.isArray(a.source_transcripts)
+      ? (a.source_transcripts as unknown[])
+          .filter((s): s is string => typeof s === "string")
+          .map(normSource)
+          .sort()
+      : [];
+    let lead = "";
+    const q = a.quality as Record<string, unknown> | undefined;
+    if (q && typeof q.notes === "string") lead = q.notes;
+    if (!lead && typeof a.novelty === "string") lead = a.novelty as string;
+    // Reduce the lead to a stable signal key: lowercased alphanumeric tokens.
+    lead = lead.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    return { sources, lead };
+  } catch {
+    return { sources: [], lead: "" };
+  }
+}
+
+/**
+ * Do two fingerprints describe the SAME underlying signal? True when they share
+ * source transcripts AND their novelty leads overlap (same `[novelty]` lead/
+ * topic). Sharing sources alone is NOT enough (two genuinely distinct angles can
+ * cite the same meeting); the lead overlap is what makes it a DUPLICATE.
+ */
+export function sameSignal(a: SignalFingerprint, b: SignalFingerprint): boolean {
+  const shareSource = a.sources.some((s) => b.sources.includes(s));
+  if (!shareSource) return false;
+  if (!a.lead || !b.lead) return false;
+  // Lead overlap: significant shared tokens (length>3) between the two leads.
+  const at = new Set(a.lead.split(" ").filter((t) => t.length > 3));
+  const bt = new Set(b.lead.split(" ").filter((t) => t.length > 3));
+  if (at.size === 0 || bt.size === 0) return false;
+  let shared = 0;
+  for (const t of at) if (bt.has(t)) shared++;
+  // Same signal if leads share >= 2 significant tokens (or one lead is a subset).
+  return shared >= 2 || shared === Math.min(at.size, bt.size);
+}
+
+/**
+ * Richer-synthesis precedence for the value tie-break: an article (longform
+ * synthesis) > a podcast (narrated synthesis) > an insight-card (atomic). Used
+ * only when two same-signal artifacts have equal/absent novelty scores.
+ */
+const FORMAT_VALUE: Record<ArtifactType, number> = {
+  article: 3,
+  podcast: 2,
+  "insight-card": 1,
+};
+
+export interface DedupResult {
+  /** Refs that survive (one winner per signal cluster + all unique artifacts). */
+  kept: ArtifactRef[];
+  /** Refs MOVED out of artifacts/ as same-signal duplicates of a kept artifact. */
+  quarantined: ArtifactRef[];
+  /** Absolute dir the dups were moved to (only set when something quarantined). */
+  quarantineDir?: string;
+}
+
+/**
+ * DETERMINISTIC in-run dedup pass. Clusters THIS run's newly-created artifacts by
+ * same-underlying-signal (shared source + overlapping novelty lead), keeps the
+ * HIGHEST-VALUE artifact in each cluster, and MOVES the rest into
+ * `index/runs/<id>/dedup/<type>/<slug>/`. "Value" = numeric novelty (higher
+ * wins), tie-broken by richer-format precedence, then key (stable).
+ *
+ * Only touches THIS run's artifacts (the diff result). A no-op when no two share
+ * a signal. Never deletes — quarantines, so a human can review false positives.
+ */
+export async function dedupBySignal(
+  created: ArtifactRef[],
+  quarantineRoot: string,
+): Promise<DedupResult> {
+  if (created.length < 2) return { kept: created, quarantined: [] };
+
+  // Enrich each ref with its fingerprint + a numeric value for the keep choice.
+  const enriched = await Promise.all(
+    created.map(async (ref) => {
+      const fp = await readSignalFingerprint(ref.dir);
+      const novelty = await readNovelty(ref.dir);
+      const noveltyNum = typeof novelty === "number" ? novelty : -1;
+      return { ref, fp, noveltyNum };
+    }),
+  );
+
+  // Greedy single-link clustering by sameSignal.
+  const used = new Set<number>();
+  const winners: typeof enriched = [];
+  const losers: ArtifactRef[] = [];
+  for (let i = 0; i < enriched.length; i++) {
+    if (used.has(i)) continue;
+    const cluster = [enriched[i]!];
+    used.add(i);
+    for (let j = i + 1; j < enriched.length; j++) {
+      if (used.has(j)) continue;
+      if (cluster.some((c) => sameSignal(c.fp, enriched[j]!.fp))) {
+        cluster.push(enriched[j]!);
+        used.add(j);
+      }
+    }
+    if (cluster.length === 1) {
+      winners.push(cluster[0]!);
+      continue;
+    }
+    // Pick the highest-value member; the rest are duplicates → quarantine.
+    cluster.sort(
+      (a, b) =>
+        b.noveltyNum - a.noveltyNum ||
+        FORMAT_VALUE[b.ref.type] - FORMAT_VALUE[a.ref.type] ||
+        a.ref.key.localeCompare(b.ref.key),
+    );
+    winners.push(cluster[0]!);
+    for (const dup of cluster.slice(1)) losers.push(dup.ref);
+  }
+
+  if (losers.length === 0) {
+    return { kept: created, quarantined: [] };
+  }
+  const quarantineDir = join(quarantineRoot, "dedup");
+  for (const ref of losers) {
+    const dest = join(quarantineDir, ref.type, ref.slug);
+    await mkdir(join(dest, ".."), { recursive: true });
+    await rename(ref.dir, dest);
+  }
+  const loserKeys = new Set(losers.map((r) => r.key));
+  return {
+    kept: created.filter((r) => !loserKeys.has(r.key)),
+    quarantined: losers,
+    quarantineDir,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The structured run summary
 // ---------------------------------------------------------------------------
 
@@ -265,6 +519,19 @@ export interface GenerationSummary {
   duration: number;
   /** The exit status of the `claude -p` spawn (0 = clean). */
   exit_code: number;
+  /**
+   * Artifacts the runner QUARANTINED post-generation (deterministic backstops):
+   * same-signal duplicates (in-run dedup) and over-cap excess. Each as
+   * `<type>/<slug>` with the reason. Empty when nothing was quarantined.
+   */
+  quarantined?: QuarantinedArtifact[];
+}
+
+export interface QuarantinedArtifact {
+  /** `<type>/<slug>` of the quarantined artifact. */
+  ref: string;
+  /** Why the runner pulled it from artifacts/. */
+  reason: "duplicate-signal" | "over-cap";
 }
 
 export interface KilledArtifact {
@@ -319,21 +586,26 @@ export function buildSummary(args: {
   stdout: string;
   duration: number;
   exitCode: number;
+  quarantined?: QuarantinedArtifact[];
 }): GenerationSummary {
   return {
     created: args.created,
     killed: parseKilled(args.stdout),
     duration: args.duration,
     exit_code: args.exitCode,
+    ...(args.quarantined && args.quarantined.length ? { quarantined: args.quarantined } : {}),
   };
 }
 
 /** A one-line human summary of a generation run (mirrors summarizeRun's style). */
 export function summarizeGeneration(s: GenerationSummary): string {
   const created = s.created.map((c) => `${c.type}/${c.slug}`).join(", ") || "none";
+  const q = s.quarantined?.length
+    ? ` quarantined=${s.quarantined.length} [${s.quarantined.map((x) => `${x.ref}:${x.reason}`).join(", ")}]`
+    : "";
   return (
     `generation: created=${s.created.length} [${created}] ` +
-    `killed=${s.killed.length} ` +
+    `killed=${s.killed.length}${q} ` +
     `duration=${Math.round(s.duration)}ms exit=${s.exit_code}`
   );
 }

@@ -34,7 +34,9 @@ import { basename, dirname, join } from "node:path";
 import {
   buildClaudeInvocation,
   buildSummary,
+  dedupBySignal,
   diffCreated,
+  enforceCap,
   readNovelty,
   resolveModel,
   scanArtifacts,
@@ -42,6 +44,7 @@ import {
   type CreatedArtifact,
   type GenerationSummary,
   type GenInvocationInput,
+  type QuarantinedArtifact,
 } from "./run-generation-lib.ts";
 
 export interface RunGenerationOptions {
@@ -143,9 +146,34 @@ export async function runGeneration(opts: RunGenerationOptions): Promise<Generat
     (result.stderr.trim() ? `\n===== STDERR =====\n${result.stderr}\n` : "");
   await writeFile(logPath, header + body);
 
-  // AFTER snapshot → diff → enrich with novelty.
+  // AFTER snapshot → diff to learn what the agent created THIS run.
   const after = await scanArtifacts(artifactsDir);
-  const createdRefs = diffCreated(before, after);
+  let createdRefs = diffCreated(before, after);
+  const quarantined: QuarantinedArtifact[] = [];
+
+  // DETERMINISTIC BACKSTOPS over whatever the agent actually wrote (the system
+  // prompt's dedup + cap rules are advisory; these are structural). Quarantine
+  // root is THIS run's dir (alongside the brief), so excess/dups land under
+  // index/runs/<id>/{dedup,over-cap}/ for human review, never deleted.
+  //
+  // 1. IN-RUN DEDUP (the core upgrade): two format passes can land on the same
+  //    underlying signal in one run. Keep the highest-value artifact per signal,
+  //    quarantine the rest. Runs FIRST so the cap counts only distinct signals.
+  const dedup = await dedupBySignal(createdRefs, briefDir);
+  for (const ref of dedup.quarantined) {
+    quarantined.push({ ref: `${ref.type}/${ref.slug}`, reason: "duplicate-signal" });
+  }
+  createdRefs = dedup.kept;
+
+  // 2. CAP ENFORCEMENT: if the agent ignored MAX_ARTIFACTS_PER_RUN, keep the
+  //    first `cap` by creation order and quarantine the excess.
+  const capped = await enforceCap(createdRefs, cap, briefDir);
+  for (const ref of capped.quarantined) {
+    quarantined.push({ ref: `${ref.type}/${ref.slug}`, reason: "over-cap" });
+  }
+  createdRefs = capped.kept;
+
+  // Enrich the SURVIVORS with novelty for the summary.
   const created: CreatedArtifact[] = [];
   for (const ref of createdRefs) {
     created.push({
@@ -155,7 +183,7 @@ export async function runGeneration(opts: RunGenerationOptions): Promise<Generat
     });
   }
 
-  return buildSummary({ created, stdout: result.stdout, duration, exitCode });
+  return buildSummary({ created, stdout: result.stdout, duration, exitCode, quarantined });
 }
 
 // ---------------------------------------------------------------------------

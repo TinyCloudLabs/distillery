@@ -27,10 +27,14 @@ import {
   buildSummary,
   buildSystemPrompt,
   buildUserMessage,
+  dedupBySignal,
   DEFAULT_GEN_MODEL,
   diffCreated,
+  enforceCap,
   parseKilled,
+  readSignalFingerprint,
   resolveModel,
+  sameSignal,
   scanArtifacts,
   summarizeGeneration,
   type ArtifactRef,
@@ -99,6 +103,10 @@ describe("buildClaudeInvocation (the reference_claude_cli_headless recipe)", () 
     expect(sp).toMatch(/cap.*3|3.*cap|MAX_ARTIFACTS_PER_RUN.*3/);
     expect(sp).toContain("save.ts");
     expect(sp).toContain("surfaced ledger");
+    // IN-RUN DEDUP instruction: read the ledger + already-created artifacts this
+    // run, one signal → one artifact across formats (the core upgrade's prompt half).
+    expect(sp).toMatch(/ONE SIGNAL.*ONE ARTIFACT|one artifact ships per underlying signal/i);
+    expect(sp).toMatch(/already created.*this run|this run/i);
     // Must NOT advance the cursor (orchestrator owns it).
     expect(sp).toMatch(/not.*cursor|cursor.*already/i);
   });
@@ -318,6 +326,222 @@ describe("runGeneration (injected spawn — never calls claude)", () => {
     // env override when no flag:
     await runGeneration({ briefPath, artifactsDir, repoRoot: dir, spawn, env: { MEET_GEN_MODEL: "haiku" } });
     expect(seen[seen.indexOf("--model") + 1]).toBe("haiku");
+  });
+});
+
+// ===========================================================================
+// 4b. DETERMINISTIC CAP ENFORCEMENT (review Medium #3 — cap is structural, not
+//     just prompt text) + IN-RUN DEDUP (Hunter-approved core upgrade).
+// ===========================================================================
+
+/** Write a fake published artifact under <artifactsDir>/<type>/<slug>/. */
+async function writeArtifact(
+  artifactsDir: string,
+  type: string,
+  slug: string,
+  body: Record<string, unknown> = {},
+): Promise<void> {
+  const d = join(artifactsDir, type, slug);
+  await mkdir(d, { recursive: true });
+  await writeFile(
+    join(d, "artifact.json"),
+    JSON.stringify({ id: slug, type, headline: slug, tags: [], source_transcripts: [], generated_at: "2026-06-11T14:00:00.000Z", quality: { critic_pass: true, quotes_verified: true }, ...body }),
+  );
+}
+
+describe("enforceCap — deterministic over-cap quarantine", () => {
+  let dir: string;
+  let artifactsDir: string;
+  let qroot: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cap-"));
+    artifactsDir = join(dir, "artifacts");
+    qroot = join(dir, "runs", "r1");
+    await mkdir(qroot, { recursive: true });
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("agent produces N+2 → only N remain in artifacts/, 2 quarantined", async () => {
+    // 5 created artifacts, cap 3. Distinct generated_at so creation order is stable.
+    const stamps = [
+      "2026-06-11T14:00:01.000Z",
+      "2026-06-11T14:00:02.000Z",
+      "2026-06-11T14:00:03.000Z",
+      "2026-06-11T14:00:04.000Z",
+      "2026-06-11T14:00:05.000Z",
+    ];
+    for (let i = 0; i < 5; i++) {
+      await writeArtifact(artifactsDir, "insight-card", `c${i}`, { generated_at: stamps[i] });
+    }
+    const created = await scanArtifacts(artifactsDir);
+    expect(created.length).toBe(5);
+
+    const res = await enforceCap(created, 3, qroot);
+    expect(res.kept.length).toBe(3);
+    expect(res.quarantined.length).toBe(2);
+
+    // The first 3 by creation order stay published; the last 2 are gone from artifacts/.
+    const remaining = await scanArtifacts(artifactsDir);
+    expect(remaining.map((r) => r.slug).sort()).toEqual(["c0", "c1", "c2"]);
+    // The excess landed in the over-cap quarantine, not deleted.
+    const quarantined = await scanArtifacts(join(qroot, "over-cap"));
+    expect(quarantined.map((r) => r.slug).sort()).toEqual(["c3", "c4"]);
+  });
+
+  test("at/under cap is a no-op", async () => {
+    await writeArtifact(artifactsDir, "article", "a0");
+    await writeArtifact(artifactsDir, "article", "a1");
+    const created = await scanArtifacts(artifactsDir);
+    const res = await enforceCap(created, 3, qroot);
+    expect(res.quarantined).toEqual([]);
+    expect((await scanArtifacts(artifactsDir)).length).toBe(2);
+  });
+});
+
+describe("in-run dedup — one signal → one artifact across formats", () => {
+  let dir: string;
+  let artifactsDir: string;
+  let qroot: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "dedup-"));
+    artifactsDir = join(dir, "artifacts");
+    qroot = join(dir, "runs", "r1");
+    await mkdir(qroot, { recursive: true });
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("sameSignal: same source + overlapping novelty lead → true; distinct → false", async () => {
+    const a = { sources: ["fundraise.md"], lead: "the 2m to 100k fundraise drift quantified claim" };
+    const b = { sources: ["fundraise.md"], lead: "fundraise drift from 2m to 100k underlying signal" };
+    const c = { sources: ["fundraise.md"], lead: "hiring plan timeline single voice topic" };
+    const d = { sources: ["other.md"], lead: "the 2m to 100k fundraise drift quantified claim" };
+    expect(sameSignal(a, b)).toBe(true); // shared source + overlapping lead
+    expect(sameSignal(a, c)).toBe(false); // shared source, DIFFERENT lead → distinct angle
+    expect(sameSignal(a, d)).toBe(false); // same lead but DIFFERENT source → not the same signal
+  });
+
+  test("a card AND a podcast on the SAME signal → only one ships, the dup is quarantined", async () => {
+    // The observed bug: a card + a podcast both on the "$2M→100k fundraise drift".
+    await writeArtifact(artifactsDir, "insight-card", "fundraise-drift-card", {
+      source_transcripts: ["/corpus/fundraise.md"],
+      novelty: 0.7,
+      quality: { critic_pass: true, quotes_verified: true, notes: "novelty: the 2M to 100k fundraise drift across three standups" },
+    });
+    await writeArtifact(artifactsDir, "podcast", "fundraise-drift-pod", {
+      source_transcripts: ["/corpus/fundraise.md"],
+      novelty: 0.9,
+      quality: { critic_pass: true, quotes_verified: true, notes: "novelty: fundraise drift from 2M down to 100k underlying signal" },
+    });
+    // A genuinely DISTINCT artifact on a different signal — must survive.
+    await writeArtifact(artifactsDir, "insight-card", "hiring-card", {
+      source_transcripts: ["/corpus/standup.md"],
+      novelty: 0.6,
+      quality: { critic_pass: true, quotes_verified: true, notes: "novelty: hiring plan timeline single voice topic" },
+    });
+
+    const created = await scanArtifacts(artifactsDir);
+    expect(created.length).toBe(3);
+
+    const res = await dedupBySignal(created, qroot);
+    // Two same-signal artifacts → ONE survives (the higher-novelty podcast, 0.9 > 0.7).
+    expect(res.quarantined.length).toBe(1);
+    expect(res.quarantined[0]!.slug).toBe("fundraise-drift-card");
+    expect(res.kept.map((r) => r.slug).sort()).toEqual(["fundraise-drift-pod", "hiring-card"]);
+
+    // The dup is gone from artifacts/ and quarantined (not deleted).
+    const remaining = await scanArtifacts(artifactsDir);
+    expect(remaining.map((r) => r.slug).sort()).toEqual(["fundraise-drift-pod", "hiring-card"]);
+    const dq = await scanArtifacts(join(qroot, "dedup"));
+    expect(dq.map((r) => r.slug)).toEqual(["fundraise-drift-card"]);
+  });
+
+  test("distinct signals all ship (no false-positive quarantine)", async () => {
+    await writeArtifact(artifactsDir, "insight-card", "a", {
+      source_transcripts: ["/corpus/x.md"],
+      quality: { critic_pass: true, quotes_verified: true, notes: "novelty: pricing strategy reversal signal" },
+    });
+    await writeArtifact(artifactsDir, "article", "b", {
+      source_transcripts: ["/corpus/y.md"],
+      quality: { critic_pass: true, quotes_verified: true, notes: "novelty: onboarding funnel drop off" },
+    });
+    const created = await scanArtifacts(artifactsDir);
+    const res = await dedupBySignal(created, qroot);
+    expect(res.quarantined).toEqual([]);
+    expect(res.kept.length).toBe(2);
+  });
+
+  test("readSignalFingerprint normalizes sources to basenames + lowercases the lead", async () => {
+    await writeArtifact(artifactsDir, "insight-card", "f", {
+      source_transcripts: ["/abs/path/To/Fundraise.MD"],
+      quality: { critic_pass: true, quotes_verified: true, notes: "Novelty: The DRIFT" },
+    });
+    const fp = await readSignalFingerprint(join(artifactsDir, "insight-card", "f"));
+    expect(fp.sources).toEqual(["fundraise.md"]);
+    expect(fp.lead).toContain("drift");
+  });
+});
+
+describe("runGeneration end-to-end — dedup + cap backstops fire", () => {
+  let dir: string;
+  let artifactsDir: string;
+  let briefPath: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "run-gen-backstop-"));
+    artifactsDir = join(dir, "artifacts");
+    await mkdir(artifactsDir, { recursive: true });
+    const runDir = join(dir, "runs", "2026-06-11T14-00-00Z");
+    await mkdir(runDir, { recursive: true });
+    briefPath = join(runDir, "run-brief.md");
+    await writeFile(briefPath, "# brief\n");
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a non-compliant agent that writes a dup + over-cap → only survivors in summary.created", async () => {
+    // Agent writes 4 artifacts: 2 on the same signal (dup) + 2 distinct. cap=2.
+    // After dedup (1 dup removed) → 3 distinct; after cap=2 → 1 more quarantined.
+    const spawn: SpawnFn = () => {
+      const fs = require("node:fs");
+      const mk = (type: string, slug: string, body: Record<string, unknown>) => {
+        const d = join(artifactsDir, type, slug);
+        fs.mkdirSync(d, { recursive: true });
+        fs.writeFileSync(join(d, "artifact.json"), JSON.stringify({ id: slug, type, headline: slug, tags: [], generated_at: body.generated_at ?? "2026-06-11T14:00:00.000Z", quality: { critic_pass: true, quotes_verified: true }, ...body }));
+      };
+      mk("insight-card", "drift-card", { generated_at: "2026-06-11T14:00:01.000Z", source_transcripts: ["/c/f.md"], novelty: 0.5, quality: { critic_pass: true, quotes_verified: true, notes: "novelty: fundraise drift 2m to 100k signal" } });
+      mk("podcast", "drift-pod", { generated_at: "2026-06-11T14:00:02.000Z", source_transcripts: ["/c/f.md"], novelty: 0.9, quality: { critic_pass: true, quotes_verified: true, notes: "novelty: fundraise drift from 2m to 100k signal" } });
+      mk("insight-card", "topic-x", { generated_at: "2026-06-11T14:00:03.000Z", source_transcripts: ["/c/x.md"], novelty: 0.8, quality: { critic_pass: true, quotes_verified: true, notes: "novelty: pricing reversal distinct topic" } });
+      mk("insight-card", "topic-y", { generated_at: "2026-06-11T14:00:04.000Z", source_transcripts: ["/c/y.md"], novelty: 0.4, quality: { critic_pass: true, quotes_verified: true, notes: "novelty: onboarding funnel distinct topic" } });
+      return { status: 0, stdout: "shipped 4", stderr: "" };
+    };
+
+    const summary = await runGeneration({
+      briefPath,
+      artifactsDir,
+      cap: 2,
+      repoRoot: dir,
+      runId: "2026-06-11T14:00:00Z",
+      spawn,
+      env: {},
+    });
+
+    // dup-signal card quarantined + 1 over-cap → 2 published survivors.
+    expect(summary.created.length).toBe(2);
+    expect(summary.quarantined?.length).toBe(2);
+    const reasons = (summary.quarantined ?? []).map((q) => q.reason).sort();
+    expect(reasons).toEqual(["duplicate-signal", "over-cap"]);
+    // The dedup winner (higher-novelty pod) is among survivors; the dup card is not.
+    const slugs = summary.created.map((c) => c.slug);
+    expect(slugs).toContain("drift-pod");
+    expect(slugs).not.toContain("drift-card");
+
+    // artifacts/ on disk matches the summary (2 published).
+    const onDisk = await scanArtifacts(artifactsDir);
+    expect(onDisk.length).toBe(2);
   });
 });
 
