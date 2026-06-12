@@ -202,6 +202,13 @@ export interface BriefInput {
   preferences: string;
   /** Whether distill ran clean (false → degraded to existing PREFERENCES.md). */
   distillDegraded: boolean;
+  /**
+   * The deterministic feedback aggregation (summarize-events.ts --format md)
+   * the agent applies distill-preferences judgment over as its FIRST task.
+   * Undefined when distill degraded (no aggregation captured) — the brief then
+   * tells the agent to run the aggregation itself before generating.
+   */
+  feedbackSummary?: string;
   /** Prior-artifact baseline summary line (counts only — no content). */
   baselineSummary: string;
 }
@@ -240,7 +247,56 @@ export function renderBrief(b: BriefInput): string {
       " — quality beats quantity.",
   );
   out.push("");
-  out.push("## Preferences panel" + (b.distillDegraded ? " (last-known-good — distill degraded)" : ""));
+  out.push("## TASK #1 (MANDATORY, BEFORE generating): close the preference loop");
+  out.push("");
+  out.push(
+    "Reactions only become preferences if YOU write them. Before any" +
+      " generation, run the **distill-preferences** skill" +
+      " (`skills/distill-preferences/SKILL.md`):",
+  );
+  out.push("");
+  out.push(
+    "1. Read the **feedback summary** below (already aggregated for you by" +
+      " `summarize-events.ts`) and open the artifacts it points at that carry" +
+      " real signal (`less` / `wrong` / `promote` / any note).",
+  );
+  out.push(
+    "2. Edit **ONLY `[learned]` bullets** in `PREFERENCES.md`. NEVER touch" +
+      " human-authored (untagged) lines — they are authoritative; if a learned" +
+      " candidate contradicts one, drop the candidate. Be conservative: require" +
+      " **≥2 consistent signals** before a generalization, and cite the evidence" +
+      " counts in each bullet, e.g. `(5× more + 3 save on founding-wedge card," +
+      " Jun 2026)`. Zero updates is a valid result.",
+  );
+  out.push(
+    "3. **Re-read the freshly-edited `PREFERENCES.md`** and generate against" +
+      " THAT — not the snapshot embedded below (which is the pre-distill" +
+      " last-known-good panel).",
+  );
+  out.push("");
+  out.push(
+    "This step is not skippable: it is the only thing that turns feedback into" +
+      " learned preferences. Do it every run, even when it changes nothing.",
+  );
+  out.push("");
+  out.push(
+    "### Feedback summary (deterministic aggregation — your distill input)" +
+      (b.distillDegraded ? " — DEGRADED" : ""),
+  );
+  out.push("");
+  if (b.distillDegraded || b.feedbackSummary === undefined) {
+    out.push(
+      "- (aggregation unavailable this run — run" +
+        " `bun skills/distill-preferences/scripts/summarize-events.ts --format md`" +
+        " yourself before generating, then apply the judgment above.)",
+    );
+  } else {
+    out.push("```md");
+    out.push(b.feedbackSummary.trimEnd());
+    out.push("```");
+  }
+  out.push("");
+  out.push("## Preferences panel (PRE-distill snapshot — re-read the file after Task #1)" + (b.distillDegraded ? " (last-known-good — distill degraded)" : ""));
   out.push("");
   out.push("```md");
   out.push(b.preferences.trimEnd());

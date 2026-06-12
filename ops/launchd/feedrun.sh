@@ -34,6 +34,60 @@ cd "$REPO"
 
 DRY_RUN="${FEEDRUN_DRY_RUN:-0}"
 
+# --- command-line args (FIX C) ------------------------------------------------
+# Honor `--dry-run` as a CLI ARG, not just the FEEDRUN_DRY_RUN env. Previously the
+# wrapper read ONLY the env and SILENTLY IGNORED any positional arg — so a manual
+# `feedrun.sh --dry-run` (the obvious way to ask for a no-spend preview) ran a
+# REAL generation (Gemini money + live publish). Now the arg maps to the dry path
+# (env and arg are OR'd: either selects dry), and any UNKNOWN arg fails LOUD so a
+# typo can never silently fall through to a real run.
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --help|-h)
+      echo "usage: feedrun.sh [--dry-run]   (or set FEEDRUN_DRY_RUN=1)" >&2
+      echo "  --dry-run   brief + cursor only; NO model calls, NO spend, NO publish." >&2
+      exit 0 ;;
+    *)
+      echo "[feedrun] FATAL: unknown argument '$arg' (accepted: --dry-run, --help)." >&2
+      echo "[feedrun] refusing to run rather than silently ignore it — a typo must not trigger a real generation." >&2
+      exit 64  # EX_USAGE
+      ;;
+  esac
+done
+
+# --- lock paths + deterministic release (FIX B) -------------------------------
+# Define the lock paths up front so the release trap can be armed EARLY. The
+# route's TS lock and the wrapper's atomic lockdir:
+LOCK="$REPO/index/.run.lock"          # the route's TS lock uses this exact path (a file)
+LOCK_DIR="$REPO/index/.run.lock.d"    # the wrapper's atomic lockdir
+# Tracks whether WE won the atomic lockdir (so the trap knows what to release).
+OWN_LOCK=0
+# Tracks whether the route handed us the file lock ($LOCK) to release. The route
+# (Generate button) ALWAYS sets FEEDRUN_RUN_ID and pre-stamps $LOCK with the
+# SERVER pid before spawning us; cron never sets it. Without this, a wrapper that
+# exits EARLY (e.g. a prereq `exit 78` BEFORE it wins the atomic lockdir) would
+# leave the route's $LOCK held by the live server pid FOREVER — never reclaimable
+# by stale-pid logic (the server is alive), wedging every future run. So a
+# route-spawned wrapper owns $LOCK from birth and must release it on ANY exit.
+RELEASE_FILE_LOCK=0
+[[ -n "${FEEDRUN_RUN_ID:-}" ]] && RELEASE_FILE_LOCK=1
+
+# release_locks — the single cleanup, idempotent + best-effort. Removes the
+# atomic lockdir only if WE won it (never steal a competitor's), and the route's
+# file lock only if it was handed to us. Armed for EXIT/INT/TERM the moment we
+# know what we own, so completion (success OR failure, including early prereq
+# exits) ALWAYS releases — never relies on stale-pid reclaim.
+release_locks() {
+  [[ "$OWN_LOCK" == "1" ]] && rm -rf "$LOCK_DIR"
+  [[ "$RELEASE_FILE_LOCK" == "1" ]] && rm -f "$LOCK"
+  return 0  # never let the trap's last [[ ]] flip the script's real exit code
+}
+# Arm immediately: a route-spawned wrapper that dies in the prereq checks below
+# (before the atomic acquire) still releases the route's $LOCK. OWN_LOCK is still
+# 0 here, so this early arm never touches the atomic lockdir we haven't won.
+trap release_locks EXIT INT TERM
+
 # --- environment: PATH + per-deploy config ------------------------------------
 # feedrun.env is gitignored (machine-specific tool paths + the TRANSCRIPT_DIRS
 # allowlist). It MUST export at least:
@@ -76,10 +130,8 @@ fi
 # pass the `-f` test before either wrote, and both run → double Gemini spend.
 # `mkdir` is atomic (a single syscall that fails if the dir exists), so exactly
 # one wrapper wins the create. The pid file inside the lockdir carries the owner
-# for stale detection. The cleanup trap is armed ONLY after WE win the acquire,
-# so a LOSING wrapper can never `rm` the winner's lock.
-LOCK="$REPO/index/.run.lock"          # the route's TS lock uses this exact path (a file)
-LOCK_DIR="$REPO/index/.run.lock.d"    # the wrapper's atomic lockdir
+# for stale detection. ($LOCK / $LOCK_DIR and the release trap are defined up top
+# so an early prereq exit still releases — FIX B.)
 mkdir -p "$REPO/index"
 
 # Stamp OUR ownership into the freshly-won lockdir. Called the instant after a
@@ -120,13 +172,19 @@ acquire_lock() {
 if ! acquire_lock; then
   LOCK_PID="$(head -n1 "$LOCK_DIR/pid" 2>/dev/null || true)"
   echo "[feedrun] a run is already in progress (pid ${LOCK_PID:-?}, lock $LOCK_DIR) — aborting." >&2
+  # We LOST the race: another wrapper owns BOTH the lockdir and $LOCK. Disarm our
+  # file-lock release so this loser never deletes the WINNER's $LOCK on exit.
+  # (OWN_LOCK is still 0, so the lockdir is already safe from us.)
+  RELEASE_FILE_LOCK=0
   exit 75  # EX_TEMPFAIL → the Generate route maps this to HTTP 409
 fi
-# We own the lock (stamped in acquire_lock). Arm cleanup ONLY now — a loser
-# never reaches this line, so it can never delete the winner's lock. The legacy
-# single-file lock ($LOCK) is kept in sync so the route's readLock still sees a
-# live holder during the run.
-trap 'rm -rf "$LOCK_DIR"; rm -f "$LOCK"' EXIT INT TERM
+# We won + stamped the lock. Mark ownership so the EARLY-armed release trap now
+# also tears down the atomic lockdir. The route's file lock ($LOCK) — overwritten
+# by stamp_lock with OUR pid — is released by the same trap on ANY exit
+# (success/failure/signal). Completion deterministically releases; no run ever
+# relies on stale-pid reclaim.
+OWN_LOCK=1
+RELEASE_FILE_LOCK=1
 
 # TEST SEAM: with FEEDRUN_LOCK_HOLD=<seconds> the wrapper acquires the lock, holds
 # it for that long, then exits WITHOUT running generation (no claude/bun spend).
@@ -165,7 +223,7 @@ else
   # Full headless run. The system prompt fully overrides the default (clean
   # run); the user message points the agent at SKILL.md. The orchestrator
   # (feed-run.ts) is the deterministic spine the agent drives.
-  SYSTEM_PROMPT="You are the distillery feed-run agent, invoked headlessly. Execute skills/feed-run/SKILL.md exactly. Judgment is yours; the orchestrator does the deterministic plumbing (index, distill, query, brief). Run the artifact skills with the MANDATORY adversarial novelty critic, respect MAX_ARTIFACTS_PER_RUN, publish survivors to artifacts/, and append the surfaced ledger. Quality beats quantity — zero artifacts is a valid run."
+  SYSTEM_PROMPT="You are the distillery feed-run agent, invoked headlessly. Execute skills/feed-run/SKILL.md exactly. Judgment is yours; the orchestrator does the deterministic plumbing (index, distill aggregation, query, brief). FIRST, before generating anything, close the preference loop per skills/distill-preferences/SKILL.md: read the brief's embedded feedback summary + the reacted-to artifacts and update ONLY the [learned] bullets in PREFERENCES.md (never touch human-authored lines; >=2 consistent signals before a generalization; cite evidence counts), then re-read PREFERENCES.md. THEN run the artifact skills with the MANDATORY adversarial novelty critic, respect MAX_ARTIFACTS_PER_RUN, publish survivors to artifacts/, and append the surfaced ledger. Quality beats quantity — zero artifacts is a valid run."
   if [[ -f "$SCRIPT_DIR/feedrun.system.md" ]]; then
     SYSTEM_PROMPT="$(cat "$SCRIPT_DIR/feedrun.system.md")"
   fi

@@ -111,6 +111,20 @@ describe("buildClaudeInvocation (the reference_claude_cli_headless recipe)", () 
     expect(sp).toMatch(/not.*cursor|cursor.*already/i);
   });
 
+  // FIX A — the headless agent's marching orders mandate distill-preferences as
+  // the FIRST task (close the loop) BEFORE generating, touching only [learned]
+  // lines and re-reading PREFERENCES.md afterward.
+  test("the system prompt mandates distill-preferences as the first task", () => {
+    const sp = buildSystemPrompt(invInput({ cap: 3 }));
+    expect(sp).toContain("distill-preferences");
+    expect(sp).toMatch(/CLOSE THE PREFERENCE LOOP|close the preference loop/i);
+    expect(sp).toContain("[learned]");
+    expect(sp).toContain("PREFERENCES.md");
+    expect(sp).toMatch(/NOT skippable|not skippable/i);
+    expect(sp).toMatch(/re-read|RE-READ/);
+    expect(sp).toMatch(/>=2 consistent signals|2 consistent signals/i);
+  });
+
   test("cap flows into both the system prompt and the user message", () => {
     const sp = buildSystemPrompt(invInput({ cap: 25 }));
     expect(sp).toContain("25");

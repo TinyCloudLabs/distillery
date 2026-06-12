@@ -23,6 +23,18 @@ Each action on a feed card teaches exactly one lesson:
 Any event may carry a free-text `note`; notes are the highest-signal data
 in the log — always read them.
 
+## When this runs in the feed-run loop (the ordering — MANDATORY)
+
+In the `feed-run` recipe this skill is the generation agent's **FIRST task,
+before any generation** (feed-run SKILL.md step 5a). The orchestrator's step 2
+runs the deterministic aggregation (`summarize-events.ts`) and **embeds its
+output in the run-brief**; the agent then does the judgment below — updating
+`PREFERENCES.md`'s `[learned]` lines — and **re-reads the freshly-updated file
+before generating**. This is the wire that closes the loop: reactions only
+become preferences because the agent writes them here, every run, ahead of the
+batch they influence. (When running this skill standalone — not inside feed-run
+— just run the procedure end to end yourself.)
+
 ## Prerequisites
 
 - bun installed. No API key required.

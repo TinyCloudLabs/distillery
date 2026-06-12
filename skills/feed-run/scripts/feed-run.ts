@@ -197,11 +197,12 @@ const log = (step: StepLog["step"], status: StepStatus, detail: string): void =>
   console.error(`[feed-run] ${step}: ${status}${detail ? ` — ${detail}` : ""}`);
 };
 
-/** Shell a deterministic skill script. Returns ok + captured stderr (counts). */
-function runScript(argv: string[]): { ok: boolean; stderr: string } {
+/** Shell a deterministic skill script. Returns ok + captured stdout/stderr. */
+function runScript(argv: string[]): { ok: boolean; stdout: string; stderr: string } {
   const res = spawnSync("bun", argv, { encoding: "utf8" });
+  const stdout = (res.stdout ?? "").trim();
   const stderr = (res.stderr ?? "").trim();
-  return { ok: res.status === 0, stderr };
+  return { ok: res.status === 0, stdout, stderr };
 }
 
 async function finish(
@@ -300,12 +301,21 @@ if (sinceArg) {
 //    path is overridable via $FEED_RUN_DISTILL_CMD purely as a test seam (a
 //    deliberately-failing stub exercises the degradation branch); production
 //    always uses the real summarize-events.ts default.
+//
+//    THE LOOP-CLOSING WIRE (FIX A): the script does the DETERMINISTIC
+//    aggregation; the generation agent does the JUDGMENT that turns it into
+//    [learned] PREFERENCES.md lines. We CAPTURE the aggregation here and embed
+//    it in the brief so the agent has the evidence in-context, and the brief +
+//    both SKILL.md mandate distill-preferences as the agent's FIRST task
+//    (update [learned] lines → re-read fresh PREFERENCES.md → THEN generate).
+//    The orchestrator stays LLM-free; the agent owns the write.
 let distillDegraded = false;
+let feedbackSummary: string | undefined;
 {
   const distillScript =
     process.env.FEED_RUN_DISTILL_CMD ??
     "skills/distill-preferences/scripts/summarize-events.ts";
-  const { ok, stderr } = runScript([
+  const { ok, stdout, stderr } = runScript([
     distillScript,
     "--format",
     "md",
@@ -316,10 +326,11 @@ let distillDegraded = false;
     distillDegraded = true;
     log("distill", "degraded", `summarize-events failed; using existing ${preferencesPath}. ${lastLine(stderr)}`);
   } else {
-    // The aggregation succeeded; the PREFERENCES.md UPDATE itself is agent
-    // judgment (distill-preferences SKILL.md) and is not performed here. We
-    // simply carry the current PREFERENCES.md into the brief as last-known-good.
-    log("distill", "ok", "feedback aggregated; PREFERENCES.md update is agent judgment (brief carries current panel)");
+    // The aggregation succeeded; CARRY ITS OUTPUT into the brief. The
+    // PREFERENCES.md UPDATE itself is agent judgment (distill-preferences
+    // SKILL.md) performed as the agent's FIRST task before generating.
+    feedbackSummary = stdout || undefined;
+    log("distill", "ok", "feedback aggregated → embedded in brief; agent applies distill-preferences as task #1 (updates [learned] lines, then re-reads + generates)");
   }
 }
 let preferences = "(no PREFERENCES.md found)";
@@ -387,6 +398,7 @@ const brief = renderBrief({
   deepDiveWrapped: advance.wrapped,
   preferences,
   distillDegraded,
+  feedbackSummary,
   baselineSummary,
 });
 log("brief", "ok", `brief prepared (${recency.length} recency + ${deepDive ? 1 : 0} deep-dive, cap ${cap})`);

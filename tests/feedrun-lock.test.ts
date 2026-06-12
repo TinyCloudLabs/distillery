@@ -87,4 +87,84 @@ describe("feedrun.sh atomic lock", () => {
     expect(code).toBe(0); // reclaimed the stale lock and ran, not blocked
     expect(existsSync(lockDir)).toBe(false); // cleaned up on exit
   });
+
+  // FIX B — a COMPLETED run releases the lock deterministically (trap/finally),
+  // not by leaving a stale lock for the next wrapper to reclaim.
+  test("a completed run leaves NO lock (file + lockdir both released)", async () => {
+    // Run to completion (no hold seam → the wrapper's dry path runs the stub bun
+    // and exits cleanly). Both the wrapper lockdir AND the route's file lock must
+    // be gone afterward.
+    const code = await runWrapper({ FEEDRUN_DRY_RUN: "1", FEEDRUN_LOCK_HOLD: "0" });
+    expect(code).toBe(0);
+    expect(existsSync(join(repo, "index", ".run.lock.d"))).toBe(false);
+    expect(existsSync(join(repo, "index", ".run.lock"))).toBe(false);
+  });
+
+  // FIX B — a route-spawned wrapper (FEEDRUN_RUN_ID set) that exits EARLY on a
+  // prereq failure (BEFORE winning the atomic lockdir) STILL releases the route's
+  // file lock — otherwise it stays held by the live server pid forever (never
+  // reclaimable), wedging every future run.
+  test("a route-spawned wrapper that fails a prereq still releases the route's file lock", async () => {
+    // Pre-stamp the route's file lock with THIS test process's (live) pid — the
+    // state startGeneration leaves before spawning the wrapper.
+    const lockFile = join(repo, "index", ".run.lock");
+    await writeFile(lockFile, `${process.pid}\n2026-06-11T07:00:00Z\n`);
+    // Force an early prereq failure on the REAL (non-dry) path: no claude on PATH.
+    // Use a PATH that has the stub bun dir but no `claude`, so `command -v claude`
+    // fails → exit 78 BEFORE the atomic acquire. FEEDRUN_RUN_ID marks us route-spawned.
+    const code = await new Promise<number>((resolve) => {
+      const child = spawn("/bin/bash", [join(repo, "ops", "launchd", "feedrun.sh")], {
+        env: {
+          HOME: process.env.HOME,
+          PATH: `${binDir}:/usr/bin:/bin`, // stub bun + coreutils; NO claude
+          FEEDRUN_DRY_RUN: "0",
+          FEEDRUN_RUN_ID: "2026-06-11T07:00:00.000Z",
+          TRANSCRIPT_DIRS: "/tmp/x",
+        },
+        stdio: "ignore",
+      });
+      child.on("exit", (c) => resolve(c ?? -1));
+    });
+    expect(code).toBe(78); // failed the claude prereq, as intended
+    expect(existsSync(lockFile)).toBe(false); // FIX B: released despite early exit
+  });
+
+  // FIX C — `--dry-run` as a CLI ARG takes the no-spend path (it used to be
+  // silently ignored, running a REAL generation). With FEEDRUN_DRY_RUN unset,
+  // the arg alone must select dry. We assert via the lock seam reaching exit 0
+  // on a PATH with NO `claude` — only the dry path (no claude prereq) survives that.
+  test("`--dry-run` arg selects the no-spend path even with FEEDRUN_DRY_RUN unset", async () => {
+    const code = await new Promise<number>((resolve) => {
+      const child = spawn(
+        "/bin/bash",
+        [join(repo, "ops", "launchd", "feedrun.sh"), "--dry-run"],
+        {
+          env: {
+            HOME: process.env.HOME,
+            PATH: `${binDir}:/usr/bin:/bin`, // stub bun + coreutils; NO claude — a real run would exit 78 here
+            FEEDRUN_LOCK_HOLD: "0",
+            // FEEDRUN_DRY_RUN deliberately UNSET: the arg must carry it.
+          },
+          stdio: "ignore",
+        },
+      );
+      child.on("exit", (c) => resolve(c ?? -1));
+    });
+    expect(code).toBe(0); // dry path: no claude prereq, completes cleanly
+    expect(existsSync(join(repo, "index", ".run.lock.d"))).toBe(false);
+  });
+
+  // FIX C — an UNKNOWN arg fails LOUD (EX_USAGE 64), never silently falls through
+  // to a real generation.
+  test("an unknown arg is rejected loudly (exit 64), not silently ignored", async () => {
+    const code = await new Promise<number>((resolve) => {
+      const child = spawn(
+        "/bin/bash",
+        [join(repo, "ops", "launchd", "feedrun.sh"), "--bogus"],
+        { env: { HOME: process.env.HOME, PATH: `${binDir}:/usr/bin:/bin` }, stdio: "ignore" },
+      );
+      child.on("exit", (c) => resolve(c ?? -1));
+    });
+    expect(code).toBe(64); // EX_USAGE — refused, not ignored
+  });
 });

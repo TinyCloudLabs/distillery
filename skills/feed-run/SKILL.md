@@ -58,12 +58,26 @@ bun skills/feed-run/scripts/feed-run.ts \
 | step | what runs | who |
 |---|---|---|
 | 1. INDEX | `index-corpus --prune` (fresh, incremental index) | orchestrator |
-| 2. DISTILL | `distill-preferences` aggregation, BEFORE generation ([D4]) | orchestrator (aggregation) + you (PREFERENCES.md edits) |
+| 2. DISTILL (aggregate) | `distill-preferences` aggregation (`summarize-events.ts`), BEFORE generation ([D4]); its output is **embedded in the brief** | orchestrator (aggregation only — NO model calls) |
 | 3a. QUERY recency | `query-corpus --since <since> --unsurfaced-only` | orchestrator |
 | 3b. QUERY deep-dive | one high-novelty, never-surfaced older thread past the cursor (ranked by the novelty proxy); advance **and persist** the cursor | orchestrator |
-| 4. BRIEF | render `run-brief.md` (titles + paths + preferences + baseline + cap) | orchestrator |
-| 5. GENERATE + CRITIC | run the generation skills against the brief, each with its own novelty-scan + adversarial critic | **headless agent** (orchestrator spawns it via `run-generation.ts` → `claude -p`; `--dry-run`/`--no-generate` skip this) |
+| 4. BRIEF | render `run-brief.md` (feedback summary + titles + paths + preferences + baseline + cap) | orchestrator |
+| 5a. DISTILL (judge + write) | apply distill-preferences judgment over the embedded feedback summary → update **only `[learned]` lines** in `PREFERENCES.md` → re-read it | **headless agent — FIRST task, before any generation** |
+| 5b. GENERATE + CRITIC | run the generation skills against the brief + the **freshly-updated** PREFERENCES.md, each with its own novelty-scan + adversarial critic | **headless agent** (orchestrator spawns it via `run-generation.ts` → `claude -p`; `--dry-run`/`--no-generate` skip this) |
 | 6. SAVE / PUBLISH | `save.ts` writes survivors to `artifacts/`; append surfaced ENTRIES to `surfaced.json` (the cursor is already persisted by step 3b) | **headless agent** |
+
+**Why the distill is split across two steps (the loop-closing wire).** The
+deterministic half (step 2, `summarize-events.ts`) only *aggregates* the
+feedback log — it can never decide what the aggregates MEAN, so it can never
+write a `[learned]` line. The judgment half (step 5a) is where reactions become
+preferences, and it is **agent work** (distillation is judgment → best model).
+For a long time only step 2 ran and nothing ever wrote `[learned]` lines, so
+the feed never learned. The wire: the orchestrator embeds the step-2 aggregation
+in the brief, and the generation agent runs the distill-preferences judgment as
+its **mandatory first task** — update `[learned]` lines, re-read `PREFERENCES.md`,
+THEN generate against the fresh file. This is not skippable: it happens every
+run (even a zero-update run is valid), so feedback always feeds forward before
+the next batch is generated.
 
 **The headless generation runner** (`scripts/run-generation.ts`): given the
 brief path, it builds the `claude -p` invocation (system prompt = the agent's
@@ -86,14 +100,30 @@ also printed to **stdout** so you can consume it directly.
 
 The brief lists, for the recency window + the one deep-dive pick: **title,
 date, path, source, and the index's short match-context snippets** — never
-transcript bodies. It also embeds the current `PREFERENCES.md` (last-known-good)
-and a prior-artifact baseline summary. **It never calls an LLM and never
-publishes.** `--dry-run` makes the stop-at-brief explicit; a non-dry run still
+transcript bodies. It also embeds the **feedback summary** (the deterministic
+`summarize-events.ts` aggregation — the agent's distill-preferences input), the
+current `PREFERENCES.md` (a pre-distill, last-known-good snapshot the agent
+re-reads after editing), and a prior-artifact baseline summary. **It never calls
+an LLM and never publishes** — including the `[learned]` PREFERENCES.md edits,
+which are the agent's first task, not the orchestrator's. `--dry-run` makes the stop-at-brief explicit; a non-dry run still
 stops at the brief because generation is your job — the difference is only what
 the run-log records.
 
 ## Steps 5–6 — your judgment (after the brief)
 
+0. **Close the preference loop FIRST (distill-preferences, MANDATORY).** Before
+   you read a single transcript for generation, turn the feedback into
+   preferences. The brief embeds the **feedback summary** (the deterministic
+   `summarize-events.ts` aggregation). Following
+   `skills/distill-preferences/SKILL.md`: read that summary, open the artifacts
+   it points at that carry real signal (`less` / `wrong` / `promote` / any
+   note), and update **only the `[learned]` bullets** in `PREFERENCES.md` —
+   never the human-authored (untagged) lines. Be conservative (**≥2 consistent
+   signals** before a generalization; cite the evidence counts in each bullet).
+   **Zero updates is a valid result.** Then **re-read `PREFERENCES.md`** and
+   generate against the freshly-updated file — NOT the pre-distill snapshot
+   embedded in the brief. This step is the only thing that turns reactions into
+   learned preferences; do it every run.
 1. **Read the actual transcripts** at the paths in the brief (the orchestrator
    only surfaced paths). The recency set is "what's new"; the deep-dive is one
    older thread the cursor rotated to.
@@ -162,7 +192,7 @@ The run never hard-fails on a single step:
 | step fails | behavior |
 |---|---|
 | INDEX | **abort** the run + log; the feed is unchanged, the server keeps serving the last artifacts |
-| DISTILL | proceed with the **existing PREFERENCES.md** (last-known-good); log a warning; the brief notes it's degraded |
+| DISTILL (aggregate) | the `summarize-events.ts` aggregation failed → no feedback summary to embed; proceed with the **existing PREFERENCES.md** (last-known-good); log a warning; the brief notes it's degraded and tells the agent to run the aggregation itself before its distill judgment |
 | QUERY recency | empty window → **deep-dive-only** run (not an error) |
 | QUERY deep-dive | no eligible older thread (all surfaced) → **recency-only** run |
 | GENERATE/CRITIC | a single skill failure drops that candidate, not the run; **zero artifacts is valid** |

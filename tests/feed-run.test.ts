@@ -206,6 +206,34 @@ describe("renderBrief", () => {
   test("wrapped cursor is annotated", () => {
     expect(renderBrief({ ...base, deepDiveWrapped: true })).toContain("cursor wrapped");
   });
+
+  // FIX A — the brief mandates distill-preferences as the agent's FIRST task and
+  // embeds the deterministic feedback summary so reactions become preferences
+  // BEFORE generation (closing the loop).
+  test("mandates the distill-preferences first task (close the loop)", () => {
+    const md = renderBrief(base);
+    expect(md).toContain("TASK #1 (MANDATORY, BEFORE generating)");
+    expect(md).toContain("[learned]");
+    expect(md).toContain("PREFERENCES.md"); // told to edit the file
+    expect(md).toContain("≥2 consistent signals"); // conservatism rule carried in
+    // The embedded panel is explicitly the PRE-distill snapshot to re-read after.
+    expect(md).toContain("PRE-distill snapshot");
+  });
+
+  test("embeds the captured feedback summary when distill aggregation ran", () => {
+    const md = renderBrief({
+      ...base,
+      feedbackSummary: "# Feedback summary\n\nTotal events: 7\n",
+    });
+    expect(md).toContain("Feedback summary (deterministic aggregation");
+    expect(md).toContain("Total events: 7");
+  });
+
+  test("missing feedback summary → tells the agent to run the aggregation itself", () => {
+    const md = renderBrief({ ...base, feedbackSummary: undefined });
+    expect(md).toContain("aggregation unavailable this run");
+    expect(md).toContain("summarize-events.ts");
+  });
 });
 
 describe("run-log summary + topic keys", () => {
@@ -361,6 +389,10 @@ describe("feed-run CLI (e2e, synthetic corpus)", () => {
     expect(stdout).toContain("# Feed-run brief");
     expect(stdout).toContain("MAX_ARTIFACTS_PER_RUN (cap): **3**");
     expect(stdout).toContain("recent-a.md");
+    // FIX A — the brief carries the mandatory distill-first task end-to-end, so a
+    // real run tells the agent to close the preference loop before generating.
+    expect(stdout).toContain("TASK #1 (MANDATORY, BEFORE generating)");
+    expect(stdout).toContain("Feedback summary (deterministic aggregation");
 
     const logs = await readRunLog(ctx);
     expect(logs.length).toBe(1);
