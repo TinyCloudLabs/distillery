@@ -5,6 +5,12 @@ node_modules/
 artifacts/
 out/
 
+# quarantined artifacts pulled from the live feed for a trust-critical claim
+# (fabricated identity/role/affiliation about a real person). Holds the same
+# meeting-derived content as artifacts/ — never committed; QUARANTINE-LOG.md
+# records WHY each was pulled.
+.quarantine/
+
 # feedback event log (personal data, like artifacts/) — anchored to the
 # repo root so a future source dir named feedback/ isn't silently ignored
 /feedback/
