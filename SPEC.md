@@ -1,6 +1,7 @@
 # distillery — SPEC v0.1
 
-2026-06-10 · Status: scaffold + shared plumbing built; artifact skills next.
+2026-06-12 · Status: skills + corpus navigation + Folio feed live; comms
+skills landed; their feed-run wiring + an approvals surface are next.
 
 ## Vision
 
@@ -12,11 +13,36 @@ the call. distillery turns transcripts into durable, shareable artifacts:
 - **Editorial articles** — longer-form pieces with generated images,
   developed from one transcript or threads across a collection.
 - **Micro-podcasts** — short audio digests of what mattered.
+- **Outward comms drafts** — social posts, investor-update nuggets, quote
+  cards, and grounded person briefs (these gate behind human approval).
 
-The skills are agent-agnostic: any coding agent (Claude Code, Codex,
-Cursor) reads a `SKILL.md`, runs small bun scripts for the deterministic
-work, and applies its own judgment for selection and writing. Artifacts
-land in a feed UI later (pulse-radio Card pattern); v1 is skills only.
+## Two layers: the skills and the distillery harness
+
+distillery is built in **two layers**, and the boundary between them is the
+point.
+
+1. **The distillery skills** — portable, agent-agnostic primitives. Each is
+   a `SKILL.md` + small bun scripts. Any agent (Claude Code, Codex, Cursor,
+   Hermes) reads the `SKILL.md`, passes transcript paths, and gets a
+   contract-valid artifact. Skills are independently callable, no skill
+   depends on another, and they know **nothing** about distillery's schedule,
+   feed, or approval flow — they only emit artifacts, stamped with metadata
+   (`approval_status`, `audience`). This portability is the core goal.
+
+2. **The distillery harness** — the distillery-specific orchestration that
+   runs the skills into a living system: the corpus index
+   (`index-corpus`/`query-corpus`), the scheduled feed-run recipe (the
+   headless generation loop), the feedback → `PREFERENCES.md` backpressure
+   loop (`distill-preferences`), and the Folio feed PWA (OpenKey auth,
+   Generate button, preferences panel). The harness is the **consumer** of
+   the skills — it decides *when* to call *which* skill and *what to do* with
+   the output (publish to the feed vs. hold for approval).
+
+**The seam between the layers is the artifact metadata.** Skills STAMP
+`approval_status`/`audience`; the harness ROUTES on it. Neither needs the
+other's internals. (See the corpus-navigation spec
+[docs/CORPUS-NAVIGATION-SPEC.md](docs/CORPUS-NAVIGATION-SPEC.md) for the
+harness's index + feed-run + launchd design.)
 
 ## Architecture
 
@@ -97,11 +123,24 @@ file name. The `Artifact` type (`_shared/lib/artifact.ts`) is modeled on
 pulse-radio's `Card` so the future feed UI consumes it directly:
 
 ```
-id, type ("insight-card" | "article" | "podcast"), headline, body?,
-quote?, attribution?, tags[], source_transcripts[], source_quotes[]?,
+id,
+type ("insight-card" | "article" | "podcast"          // internal
+    | "social-post" | "investor-update-snippet"        // outward
+    | "quote-card" | "person-brief"),                  // outward
+headline, body?, quote?, attribution?, tags[],
+source_transcripts[], source_quotes[]?,
 hero_image?, audio?, generated_at, generation_model?,
-quality { critic_pass, quotes_verified, notes? }
+quality { critic_pass, quotes_verified, notes? },
+approval_status? ("pending" | "approved"),   // the routing seam: outward
+audience? ("public" | "investors" | "internal"),  //   types default pending
+platform?                                          // e.g. "x" / "linkedin"
 ```
+
+**The metadata seam.** `approval_status` and `audience` are how the harness
+routes without reaching into a skill's internals. Internal types
+(`insight-card`, `article`, `podcast`) ignore `approval_status`; **outward
+types default to `pending`** in `validateArtifact` (nothing outward-facing is
+approved by default). Skills STAMP these fields; the harness ROUTES on them.
 
 Validation is plain TS (`validateArtifact`) — no runtime deps, so any
 agent's bun can run the scripts. `writeArtifact` validates before
@@ -187,11 +226,18 @@ Both resolve keys via `getSecret("GEMINI_API_KEY")` unless given one.
 
 ## Artifact types
 
-| Type | Skill (planned) | Media | Notes |
-| --- | --- | --- | --- |
-| insight-card | extract-insights (+ illustrate step) | hero image | v1 template skill ships extract/verify/save; illustration next phase |
-| article | write-article | inline/hero images | editorial long-form from one or many transcripts |
-| podcast | make-podcast | audio file | micro-podcast digest; **TTS default: Gemini TTS (assumption — flagged, see below)** |
+Internal types publish to the feed; outward types are born
+`approval_status: pending` and route to an approvals surface (not yet built).
+
+| Type | Skill | Class | Media | Notes |
+| --- | --- | --- | --- | --- |
+| insight-card | extract-insights (+ illustrate step) | internal | hero image | template skill: extract/verify/save + illustration |
+| article | write-article | internal | inline/hero images | editorial long-form from one or many transcripts |
+| podcast | make-podcast | internal | audio file | micro-podcast digest; Gemini TTS (assumption — flagged below) |
+| social-post | banger-extractor | outward | — | ONE earned-secret line for X; leak-scrubbed + slop-killed |
+| investor-update-snippet | investor-snippet | outward | — | one forwardable investor signal, no hype |
+| quote-card | quote-card | outward | quote image | text-on-image card from an already-approved line |
+| person-brief | person-brief | outward | — | grounded pre-meeting dossier; identity-grounding is load-bearing |
 
 ## Build phases
 
@@ -260,6 +306,12 @@ the new skills surface, the agent judges.
   in every artifact skill; per Hunter: artifacts must surface synthesis
   the attendee couldn't do in the room — a well-executed summary is a
   failed artifact.
+- **2026-06-12** Named the two layers — portable agent-agnostic *skills* vs
+  the distillery-specific orchestration *harness*. Skills stay primitives
+  that stamp artifact metadata (`approval_status`/`audience`); the harness
+  routes on it. New comms skills (banger-extractor, investor-snippet,
+  quote-card, person-brief) added; their feed-run wiring + an approvals
+  surface for outward (pending) drafts are the next orchestration step.
 
 ## Assumptions
 
