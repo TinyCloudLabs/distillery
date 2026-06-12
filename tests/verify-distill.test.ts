@@ -17,11 +17,11 @@ import {
   SIGNAL_THRESHOLD,
   verifyDistill,
   type DistillCursor,
-} from "../skills/distill-preferences/scripts/distill-verify-lib.ts";
+} from "../harness/distill-preferences/scripts/distill-verify-lib.ts";
 
 const CLI = resolve(
   import.meta.dir,
-  "../skills/distill-preferences/scripts/verify-distill.ts",
+  "../harness/distill-preferences/scripts/verify-distill.ts",
 );
 
 // ---------------------------------------------------------------------------

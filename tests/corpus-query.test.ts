@@ -11,13 +11,13 @@ import { join } from "node:path";
 import type {
   CorpusIndex,
   IndexRecord,
-} from "../skills/index-corpus/scripts/corpus-index.ts";
+} from "../harness/index-corpus/scripts/corpus-index.ts";
 import type { PriorArtifactIndex } from "../skills/_shared/lib/novelty.ts";
 import {
   queryCorpus,
   buildSurfacedJoin,
   renderQueryMarkdown,
-} from "../skills/query-corpus/scripts/corpus-query.ts";
+} from "../harness/query-corpus/scripts/corpus-query.ts";
 import {
   advanceCursor,
   appendSurfaced,
@@ -26,7 +26,7 @@ import {
   writeLedger,
   ledgerSurfacedPaths,
   type SurfacedLedger,
-} from "../skills/query-corpus/scripts/surfaced-ledger.ts";
+} from "../harness/query-corpus/scripts/surfaced-ledger.ts";
 
 // --- synthetic index fixtures (no real content) ---------------------------
 

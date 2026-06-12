@@ -39,8 +39,8 @@ import {
   summarizeGeneration,
   type ArtifactRef,
   type GenInvocationInput,
-} from "../skills/feed-run/scripts/run-generation-lib.ts";
-import { runGeneration, type SpawnFn } from "../skills/feed-run/scripts/run-generation.ts";
+} from "../harness/feed-run/scripts/run-generation-lib.ts";
+import { runGeneration, type SpawnFn } from "../harness/feed-run/scripts/run-generation.ts";
 
 const REPO = join(import.meta.dir, "..");
 
@@ -681,7 +681,7 @@ function runFeedRun(
   const res = spawnSync(
     "bun",
     [
-      "skills/feed-run/scripts/feed-run.ts",
+      "harness/feed-run/scripts/feed-run.ts",
       "--index-path",
       ctx.indexPath,
       "--ledger",

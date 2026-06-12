@@ -12,11 +12,11 @@ import {
   checkHumanLinesUnchanged,
   humanLines,
   isLearnedBullet,
-} from "../skills/distill-preferences/scripts/preferences-guard-lib.ts";
+} from "../harness/distill-preferences/scripts/preferences-guard-lib.ts";
 
 const CLI = resolve(
   import.meta.dir,
-  "../skills/distill-preferences/scripts/guard-preferences.ts",
+  "../harness/distill-preferences/scripts/guard-preferences.ts",
 );
 
 // ---------------------------------------------------------------------------

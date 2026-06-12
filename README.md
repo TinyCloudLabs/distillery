@@ -30,6 +30,44 @@ The clean seam between the two layers is the artifact contract's metadata:
 **skills STAMP `approval_status`/`audience`; the harness ROUTES on it.**
 Neither needs the other's internals.
 
+The directory layout mirrors the two layers exactly:
+
+```
+distillery/
+├── skills/                  Layer 1 — portable, agent-agnostic artifact skills
+│   ├── extract-insights/      internal miners …
+│   ├── write-article/
+│   ├── make-podcast/
+│   ├── illustrate-card/       packaging
+│   ├── banger-extractor/      outward drafts …
+│   ├── investor-snippet/
+│   ├── quote-card/
+│   ├── person-brief/          on-demand
+│   └── _shared/lib/           the shared skill library (artifact contract, transcript,
+│                              novelty, gemini/tts, feedback, …) — imported across layers
+│
+├── harness/                 Layer 2 — distillery-specific orchestration
+│   ├── index-corpus/          corpus index build/refresh
+│   ├── query-corpus/          retrieval over the index
+│   ├── distill-preferences/   feedback → [learned] PREFERENCES.md loop
+│   ├── feed-run/              the saved feed-run recipe (runbook + orchestrator)
+│   ├── feed/                  the Folio feed PWA (its own bun workspace)
+│   └── ops/launchd/           launchd plists + feedrun.sh/server.sh wrappers
+│
+│   # runtime state + config live at the REPO ROOT (gitignored except PREFERENCES.md):
+├── artifacts/               skill output the feed serves
+├── feedback/                the revealed-preference event log
+├── index/                   corpus index + surfaced ledger + run log
+├── .quarantine/             killed drafts (recoverable)
+├── PREFERENCES.md           the control valve (human + agent co-authored)
+└── .env                     secrets (Gemini key, OpenKey allowlist, …)
+```
+
+Code references state dirs (`artifacts/`, `feedback/`, `index/`,
+`PREFERENCES.md`) relative to the **repo root**, never the cwd or the app dir —
+so the feed app under `harness/feed/` resolves the same `artifacts/` the
+skills write.
+
 ---
 
 ## Layer 1 — Skills (portable, agent-agnostic)
@@ -143,7 +181,7 @@ skills continuously and decides what happens to their output. It is the
 - **The corpus index** (`index-corpus` + `query-corpus`) — a fast,
   incremental view of the whole ~394-transcript corpus so a run never
   re-parses every file. `index/` is gitignored (it holds meeting content).
-- **The feed-run recipe** (`skills/feed-run/`) — the headless generation
+- **The feed-run recipe** (`harness/feed-run/`) — the headless generation
   loop: index → distill-preferences → query (recency window + one rotating
   deep-dive) → generate (the miner skills, each with its novelty + critic
   pass) → critic → publish, under a per-run artifact cap. Designed to run
@@ -155,7 +193,7 @@ skills continuously and decides what happens to their output. It is the
   distills them into `[learned]` bullets in `PREFERENCES.md`; the next run's
   miner skills read `PREFERENCES.md` before generating. A deterministic guard
   protects human-authored lines.
-- **The Folio feed PWA** (`feed/`) — a pulse-radio-style card feed over
+- **The Folio feed PWA** (`harness/feed/`) — a pulse-radio-style card feed over
   `artifacts/`. Behind an OpenKey passkey front-door (single-user allowlist,
   `/api/*` and `/media/*` gated). It serves the cards, records feedback,
   exposes the preferences panel (`GET/PUT /api/preferences`, ETag-guarded),
@@ -196,10 +234,10 @@ bun test
 bunx tsc --noEmit
 ```
 
-The Folio feed app has its own workspace under `feed/`:
+The Folio feed app has its own workspace under `harness/feed/`:
 
 ```sh
-cd feed && bun install && bun run build && bun run start
+cd harness/feed && bun install && bun run build && bun run start
 ```
 
 See [SPEC.md](SPEC.md) for the architecture, decisions log, and the

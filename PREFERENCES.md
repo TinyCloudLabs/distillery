@@ -20,7 +20,7 @@ from the feedback event log (`feedback/events.jsonl`).
   tag). A `[learned]` mention anywhere other than the start of a bullet
   (like the ones in this preamble) is plain text, not a tagged bullet.
   This convention is now **deterministically enforced**: before every agent
-  distill, a guard (`skills/distill-preferences/scripts/guard-preferences.ts`)
+  distill, a guard (`harness/distill-preferences/scripts/guard-preferences.ts`)
   snapshots every non-`[learned]` line; after the agent writes, it asserts
   that set is unchanged and **restores the file** if any human line was
   edited, removed, added, or reordered. Because the guard classifies lines by

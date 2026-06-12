@@ -3,7 +3,7 @@
 //
 // The deterministic human-line guard + distill verification used to be wired
 // ONLY into feed-run.ts's real-generation `else` branch — a code path
-// PRODUCTION NEVER RUNS. Production spawns ops/launchd/feedrun.sh, whose
+// PRODUCTION NEVER RUNS. Production spawns harness/ops/launchd/feedrun.sh, whose
 // `claude -p` agent self-distills + self-generates, skipping that branch. So the
 // guard was unreachable in production: PREFERENCES.md human lines were protected
 // only by prose.
@@ -19,7 +19,8 @@
 //
 // No real model call, no Gemini spend: `claude` is a local stub. `bun` is real
 // (the guard/verify scripts are bun TS with only node: + relative imports), so
-// the temp repo SYMLINKS the real skills/ tree.
+// the temp repo SYMLINKS the real skills/ tree (for _shared) AND the real
+// harness/distill-preferences tree (where the guard/verify scripts now live).
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, writeFile, chmod, readFile, symlink } from "node:fs/promises";
@@ -28,7 +29,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const REPO = resolve(import.meta.dir, "..");
-const WRAPPER = join(REPO, "ops", "launchd", "feedrun.sh");
+const WRAPPER = join(REPO, "harness", "ops", "launchd", "feedrun.sh");
 
 let repo: string;
 let binDir: string;
@@ -42,20 +43,25 @@ beforeEach(async () => {
   repo = await mkdtemp(join(tmpdir(), "feedrun-wrapper-guard-"));
   binDir = join(repo, "bin");
   await mkdir(binDir, { recursive: true });
-  await mkdir(join(repo, "ops", "launchd"), { recursive: true });
+  await mkdir(join(repo, "harness", "ops", "launchd"), { recursive: true });
   await mkdir(join(repo, "index"), { recursive: true });
   await mkdir(join(repo, "feedback"), { recursive: true });
   await mkdir(join(repo, "artifacts"), { recursive: true });
 
-  // Symlink the REAL skills/ tree so the wrapper's `bun skills/...` calls hit the
-  // actual guard + verify scripts (they import only node: + relative .ts, so no
-  // node_modules is needed in the temp repo).
+  // Symlink the REAL skills/ tree (so `_shared/lib` resolves) AND the real
+  // harness/distill-preferences tree, where the guard + verify scripts the
+  // wrapper invokes (`bun harness/distill-preferences/...`) now live. They import
+  // only node: + relative .ts, so no node_modules is needed in the temp repo.
   await symlink(join(REPO, "skills"), join(repo, "skills"));
+  await symlink(
+    join(REPO, "harness", "distill-preferences"),
+    join(repo, "harness", "distill-preferences"),
+  );
 
   // The real wrapper, copied into the temp repo layout (it resolves REPO from
-  // $SCRIPT_DIR/../..).
-  await writeFile(join(repo, "ops", "launchd", "feedrun.sh"), await Bun.file(WRAPPER).text());
-  await chmod(join(repo, "ops", "launchd", "feedrun.sh"), 0o755);
+  // $SCRIPT_DIR/../../..).
+  await writeFile(join(repo, "harness", "ops", "launchd", "feedrun.sh"), await Bun.file(WRAPPER).text());
+  await chmod(join(repo, "harness", "ops", "launchd", "feedrun.sh"), 0o755);
 
   // Real `bun` (find it on the host PATH) symlinked into the stub bin so the
   // wrapper's prereq `command -v bun` passes AND the guard/verify scripts run.
@@ -65,7 +71,7 @@ beforeEach(async () => {
 
   // feedrun.env: stub bin first on PATH, a corpus dir so the prereq passes.
   await writeFile(
-    join(repo, "ops", "launchd", "feedrun.env"),
+    join(repo, "harness", "ops", "launchd", "feedrun.env"),
     `export PATH="${binDir}:$PATH"\nexport TRANSCRIPT_DIRS="${repo}/corpus"\n`,
   );
 
@@ -95,7 +101,7 @@ async function installClaudeStub(agentBody: string): Promise<void> {
 
 function runWrapper(): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn("/bin/bash", [join(repo, "ops", "launchd", "feedrun.sh")], {
+    const child = spawn("/bin/bash", [join(repo, "harness", "ops", "launchd", "feedrun.sh")], {
       env: {
         HOME: process.env.HOME,
         PATH: `${binDir}:/usr/bin:/bin`,
@@ -180,7 +186,7 @@ describe("feedrun.sh production wrapper guard (PR #8 BLOCKER)", () => {
     // state after a prior distill that consumed nothing newer than the events) so
     // an unchanged file reads as learnedChanged=false — the real no-op case.
     const { learnedFingerprint } = await import(
-      "../skills/distill-preferences/scripts/distill-verify-lib.ts"
+      "../harness/distill-preferences/scripts/distill-verify-lib.ts"
     );
     await writeFile(
       join(repo, "index", "distill-cursor.json"),

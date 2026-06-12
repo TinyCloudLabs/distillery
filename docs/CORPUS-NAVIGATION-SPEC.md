@@ -82,7 +82,7 @@ only — the agent decides nothing here.
 ### Script contract
 
 ```sh
-bun skills/index-corpus/scripts/index-corpus.ts \
+bun harness/index-corpus/scripts/index-corpus.ts \
   [<dir-or-file>...] \
   [--index-path index/corpus-index.json] \
   [--full]            # ignore hashes, re-process everything
@@ -98,7 +98,7 @@ Behavior:
 1. Walk each dir (reuse `loadTranscripts`' file collection: `.md`/`.txt`,
    recursed, dotfiles skipped).
 2. For each file, compute a **content hash** (sha256 of raw bytes — `Bun.CryptoHasher`,
-   already used in `feed/src/app.ts`). If the hash matches the existing index
+   already used in `harness/feed/src/app.ts`). If the hash matches the existing index
    record, skip (no re-parse). Only new/changed files are parsed.
 3. Parse via `parseTranscript` (with the **Soundcore adapter**, §4).
 4. Derive per-transcript record (below), reusing the novelty analyzers'
@@ -111,7 +111,7 @@ Behavior:
    - `speakerTurnCounts` matches the `survey.ts` digest field name already in
      `write-article`.
 5. Write `corpus-index.json` (atomic: write tmp, `rename` — same pattern as
-   `feed/src/app.ts`). `--prune` removes records for vanished files.
+   `harness/feed/src/app.ts`). `--prune` removes records for vanished files.
 
 ### Persistence location
 
@@ -168,7 +168,7 @@ paths + match context; the agent reads the actual transcripts it points at.
 ### Script contract
 
 ```sh
-bun skills/query-corpus/scripts/query-corpus.ts \
+bun harness/query-corpus/scripts/query-corpus.ts \
   [--index-path index/corpus-index.json] \
   [--since 2026-06-04] [--until 2026-06-11]   # date window (inclusive)
   [--speaker "Sam"] [--entity "OpenKey"] [--term permissioning] [--source soundcore]
@@ -325,13 +325,13 @@ and the WH-prose-before-transcript trap.
 
 A saved prompt/runbook the headless agent executes top to bottom. It is the
 orchestration layer — *all* selection and quality judgment happens here, via the
-existing skills. Lives at `skills/feed-run/SKILL.md` (so any agent can run it
+existing skills. Lives at `harness/feed-run/SKILL.md` (so any agent can run it
 manually too) and is what the launchd job invokes.
 
 ### Ordered pipeline
 
 ```
-1. INDEX        bun skills/index-corpus/scripts/index-corpus.ts --prune
+1. INDEX        bun harness/index-corpus/scripts/index-corpus.ts --prune
 2. DISTILL      run distill-preferences  (feedback → PREFERENCES.md)   [D4]
 3. QUERY        a) recency:  query-corpus --since <last_run> --unsurfaced-only
                 b) deepdive: pick ONE high-novelty, never-surfaced older
@@ -392,7 +392,7 @@ It exists to mine the back-catalog once so the daily run can stay cheap and
 recency-focused.
 
 - **Invocation:** same recipe, `--mode backfill` (or a sibling
-  `skills/feed-run/SKILL.md` section). Differences from the daily run:
+  `harness/feed-run/SKILL.md` section). Differences from the daily run:
   - **Query:** no recency window; iterate the *entire* index in novelty-ranked
     batches (e.g. process the top-N drift groups + single-voice clusters first),
     rather than one deep-dive per run.
@@ -412,24 +412,24 @@ recency-focused.
 
 ## 7. launchd setup
 
-Two plists. They live in the repo at `ops/launchd/` (templated, with
-`__REPO__`/`__HOME__` placeholders), installed by a `ops/install-launchd.sh`
+Two plists. They live in the repo at `harness/ops/launchd/` (templated, with
+`__REPO__`/`__HOME__` placeholders), installed by a `harness/ops/install-launchd.sh`
 that fills the placeholders and copies to `~/Library/LaunchAgents/`. Logs go to
 `~/Library/Logs/distillery/`.
 
 ### (a) Scheduled feed run — `xyz.tinycloud.distillery.feed-run.plist`
 
 - `StartCalendarInterval`: weekday mornings (e.g. Mon–Fri 08:30).
-- `ProgramArguments`: a wrapper script `ops/feed-run.sh` that:
+- `ProgramArguments`: a wrapper script `harness/ops/feed-run.sh` that:
   1. `cd $REPO`
   2. exports env (`TRANSCRIPT_DIRS`, `GEMINI_API_KEY`/`GOOGLE_AI_API_KEY` — TTS
      + image steps need it; index/query/distill don't) from a sourced
-     `ops/feed-run.env` (gitignored).
+     `harness/ops/feed-run.env` (gitignored).
   3. invokes the recipe headless:
      ```bash
      claude -p "Run the distillery feed-run recipe (daily mode). \
-       Read skills/feed-run/SKILL.md and execute its ordered pipeline." \
-       --system-prompt "$(cat ops/feed-run.system.md)" \
+       Read harness/feed-run/SKILL.md and execute its ordered pipeline." \
+       --system-prompt "$(cat harness/ops/feed-run.system.md)" \
        --model opus
      ```
      Per the `reference_claude_cli_headless` recipe, `--system-prompt` fully
@@ -446,7 +446,7 @@ that fills the placeholders and copies to `~/Library/LaunchAgents/`. Logs go to
 
 ### (b) Server + tunnel keep-alive — `xyz.tinycloud.distillery.feed-server.plist`
 
-- Runs `feed/` server (`bun src/server.ts`) + the tunnel (cloudflared) under
+- Runs `harness/feed/` server (`bun src/server.ts`) + the tunnel (cloudflared) under
   `KeepAlive: true` and `RunAtLoad: true`, so a reboot brings both back without
   Hunter. This subsumes the earlier-deferred "server + tunnel durability"
   problem.
@@ -458,7 +458,7 @@ that fills the placeholders and copies to `~/Library/LaunchAgents/`. Logs go to
 
 ### Install / inspect / uninstall
 
-`ops/install-launchd.sh` does `launchctl bootstrap gui/$(id -u) <plist>` for
+`harness/ops/install-launchd.sh` does `launchctl bootstrap gui/$(id -u) <plist>` for
 each; README documents `launchctl kickstart` (run-now), `launchctl print` (status),
 and `launchctl bootout` (uninstall). No `crontab` — launchd only.
 
@@ -470,8 +470,8 @@ A button in the feed UI that fires the **same recipe** on demand, so Hunter can
 force a run without waiting for the cron.
 
 - **Contract:** `POST /api/generate` (gated, same OpenKey front-door as every
-  `/api/*` route — see `feed/src/auth.ts`). Body: `{ mode?: "daily" | "backfill", dry_run?: boolean }`.
-  Returns `202 { run_id }` immediately and spawns `ops/feed-run.sh` as a detached
+  `/api/*` route — see `harness/feed/src/auth.ts`). Body: `{ mode?: "daily" | "backfill", dry_run?: boolean }`.
+  Returns `202 { run_id }` immediately and spawns `harness/ops/feed-run.sh` as a detached
   child; the route does NOT block on generation.
 - **Status:** `GET /api/generate/:run_id` reads `index/run-log.jsonl` for that
   run's progress/outcome; the UI polls it. (Reuses the structured run log from §7.)
@@ -483,7 +483,7 @@ force a run without waiting for the cron.
 - **v1 stance:** **optional.** The cron (Layer 3) is the primary trigger and
   ships first. The button is a convenience that reuses the exact same wrapper —
   spec it now, build it after the cron is proven. For v1 it can ship as
-  **docs only** ("to force a run: `launchctl kickstart …` or run `ops/feed-run.sh`")
+  **docs only** ("to force a run: `launchctl kickstart …` or run `harness/ops/feed-run.sh`")
   and graduate to the HTTP route once concurrency (§10) is handled.
 
 ---
@@ -522,7 +522,7 @@ media generation meters.
 
 | # | Risk | Mitigation / open question |
 |---|---|---|
-| R1 | **Concurrency** — cron run fires while Hunter taps Generate (or two crons overlap). | A **lockfile** (`index/.run.lock`, written by `ops/feed-run.sh`, PID + start time, removed on exit/trap). A second run aborts early with "run in progress." `POST /api/generate` checks the lock and returns `409` if held. Decide: queue vs reject — **propose reject** (simplest; runs are frequent enough). |
+| R1 | **Concurrency** — cron run fires while Hunter taps Generate (or two crons overlap). | A **lockfile** (`index/.run.lock`, written by `harness/ops/feed-run.sh`, PID + start time, removed on exit/trap). A second run aborts early with "run in progress." `POST /api/generate` checks the lock and returns `409` if held. Decide: queue vs reject — **propose reject** (simplest; runs are frequent enough). |
 | R2 | **Index + ledger contain meeting content.** | Gitignore `/index/` (entities, quote context, speaker names) exactly like `artifacts/` and `feedback/`. Already the stance for derived personal data. |
 | R3 | **A transcript edited after being surfaced.** | The `content_hash` detects the edit at index time → record re-processed. But the surfaced-join keys on path, so an edited transcript stays "surfaced." Open question: do we re-eligible a materially-changed transcript? **Propose:** store the `content_hash` in the `surfaced.json` entry; if the hash changes, the recency/deep-dive query may re-offer it (the novelty critic still guards against re-surfacing the same angle). Flag for Hunter. |
 | R4 | **Hermes as a future consumer.** | These skills are agent-agnostic by construction (SKILL.md + bun scripts, no model calls). A future Hermes agent can call `index-corpus`/`query-corpus`/the generation skills directly — the recipe is just a prompt Hermes could also run. No design change needed; note it so we don't accidentally couple the recipe to Claude Code specifics (keep the wrapper thin, keep judgment in SKILL.md). |
@@ -543,8 +543,8 @@ agent-orchestration + OS plumbing land on top of a proven base.
 | **PR1 — Soundcore adapter** | `transcript.ts` format detection + `parseSoundcore` + empty-skip; synthetic fixtures (with-turns, empty, WH-trap); typecheck + tests. | The corpus parses correctly end-to-end (today it leaks empties). Unblocks everything. |
 | **PR2 — index-corpus** | new skill (SKILL.md + script), `corpus-index.json` schema, incremental hashing, `--full`/`--prune`, `/index/` gitignore, tests. | Fast repeated corpus access; foundation for query + recipe. |
 | **PR3 — query-corpus** | new skill, filters, surfaced-join (prior-artifact + `surfaced.json` ledger), output shapes, tests. | The agent can ask "what's new / what's unsurfaced." |
-| **PR4 — feed-run recipe (manual)** | `skills/feed-run/SKILL.md` ordered pipeline, recency + deep-dive cursor, `MAX_ARTIFACTS_PER_RUN`, failure-degradation, `surfaced.json` writes. Run it **by hand** end-to-end on the real corpus as live verification. | The autonomous loop works — just hand-triggered. The whole product, minus the timer. |
-| **PR5 — launchd** | `ops/launchd/*.plist`, `install-launchd.sh`, `feed-run.sh` wrapper, env files, logging, lockfile (R1), server+tunnel keep-alive plists. | The heartbeat + durability. The system runs itself. |
+| **PR4 — feed-run recipe (manual)** | `harness/feed-run/SKILL.md` ordered pipeline, recency + deep-dive cursor, `MAX_ARTIFACTS_PER_RUN`, failure-degradation, `surfaced.json` writes. Run it **by hand** end-to-end on the real corpus as live verification. | The autonomous loop works — just hand-triggered. The whole product, minus the timer. |
+| **PR5 — launchd** | `harness/ops/launchd/*.plist`, `install-launchd.sh`, `feed-run.sh` wrapper, env files, logging, lockfile (R1), server+tunnel keep-alive plists. | The heartbeat + durability. The system runs itself. |
 | **PR6 — backfill mode** | `--mode backfill`, larger budget, batch/checkpoint, coverage recording. Run once. | Back-catalog mined; daily run stays cheap. |
 | **PR7 (optional) — Generate button** | `POST /api/generate` + status route + UI affordance + `dry_run`. | On-demand trigger from the feed. Only after R1 concurrency is handled. |
 

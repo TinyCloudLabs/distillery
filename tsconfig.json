@@ -15,5 +15,13 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["skills/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "skills/**/*.ts",
+    "harness/feed-run/**/*.ts",
+    "harness/index-corpus/**/*.ts",
+    "harness/query-corpus/**/*.ts",
+    "harness/distill-preferences/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["harness/feed"]
 }

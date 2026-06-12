@@ -15,13 +15,13 @@ Winner of the 2026-06-11 design lab: **Variant A — "Folio"**, an editorial tre
 
 Reference copies of the winning lab files live at `/tmp/folio-reference/` (VariantA.tsx, VariantA.css, shared.tsx, design-brief.json). Treat them as the design source of truth while implementing; the lab itself has been deleted from the repo.
 
-## Files to change (`feed/web/src/*`)
+## Files to change (`harness/feed/web/src/*`)
 
-- `feed/web/src/styles.css` — replace current styles with Folio tokens and component styles (see DESIGN_MEMORY.md for the token set). Port the `.va-*` patterns from VariantA.css, renamed to app-level classes.
-- `feed/web/src/App.tsx` — restructure feed layout to the Folio card anatomy: kicker row (type · source · novelty), serif headline, optional hero image, pull-quote with red left rule, body excerpt, audio row (circular play + hairline scrubber + mono timestamps), action footer.
-- `feed/web/src/main.tsx` — stays minimal (lab conditional already reverted).
-- New components as needed under `feed/web/src/` (e.g. `Card.tsx`, `Actions.tsx`, `AudioRow.tsx`, `PreferencesPanel.tsx`) — extract from App.tsx rather than inventing new structure.
-- `feed/web/index.html` — fonts (system serif stack is fine: Iowan Old Style / New York / Palatino / Georgia), theme-color meta, PWA manifest link.
+- `harness/feed/web/src/styles.css` — replace current styles with Folio tokens and component styles (see DESIGN_MEMORY.md for the token set). Port the `.va-*` patterns from VariantA.css, renamed to app-level classes.
+- `harness/feed/web/src/App.tsx` — restructure feed layout to the Folio card anatomy: kicker row (type · source · novelty), serif headline, optional hero image, pull-quote with red left rule, body excerpt, audio row (circular play + hairline scrubber + mono timestamps), action footer.
+- `harness/feed/web/src/main.tsx` — stays minimal (lab conditional already reverted).
+- New components as needed under `harness/feed/web/src/` (e.g. `Card.tsx`, `Actions.tsx`, `AudioRow.tsx`, `PreferencesPanel.tsx`) — extract from App.tsx rather than inventing new structure.
+- `harness/feed/web/index.html` — fonts (system serif stack is fine: Iowan Old Style / New York / Palatino / Georgia), theme-color meta, PWA manifest link.
 
 ## Six-action semantics to preserve
 

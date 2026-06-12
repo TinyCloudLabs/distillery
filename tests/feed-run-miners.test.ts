@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import type { IndexRecord, CorpusIndex } from "../skills/index-corpus/scripts/corpus-index.ts";
+import type { IndexRecord, CorpusIndex } from "../harness/index-corpus/scripts/corpus-index.ts";
 import {
   detectSalientPeople,
   findSalientPeople,
@@ -24,7 +24,7 @@ import {
   existingBriefSlugs,
   summarizeSalient,
   DEFAULT_SALIENCE_MIN_TRANSCRIPTS,
-} from "../skills/feed-run/scripts/salient-people-lib.ts";
+} from "../harness/feed-run/scripts/salient-people-lib.ts";
 import {
   partitionByRouting,
   isDraftAudience,
@@ -37,8 +37,8 @@ import {
   summarizeGeneration,
   type ArtifactRef,
   type GenInvocationInput,
-} from "../skills/feed-run/scripts/run-generation-lib.ts";
-import { renderBrief } from "../skills/feed-run/scripts/feed-run-lib.ts";
+} from "../harness/feed-run/scripts/run-generation-lib.ts";
+import { renderBrief } from "../harness/feed-run/scripts/feed-run-lib.ts";
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -515,7 +515,7 @@ describe("feed-run wiring: run-log records drafts produced vs published", () => 
     const res = spawnSync(
       "bun",
       [
-        "skills/feed-run/scripts/feed-run.ts",
+        "harness/feed-run/scripts/feed-run.ts",
         "--index-path", ctx.indexPath,
         "--ledger", ctx.ledgerPath,
         "--runs-dir", ctx.runsDir,
