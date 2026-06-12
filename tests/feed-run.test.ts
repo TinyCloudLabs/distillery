@@ -441,6 +441,104 @@ describe("feed-run CLI (e2e, synthetic corpus)", () => {
     expect(brief).toContain("# Feed-run brief");
   });
 
+  test("run-log.json is written INCREMENTALLY (steps appear mid-run, not only at the end)", async () => {
+    // REGRESSION for PR #14 fix #1: the status endpoint drives its live stage
+    // track off run-log.json's steps[]. If the orchestrator only wrote that file
+    // in finish() (once, at the end) the bar would sit inert all run then snap to
+    // done. We drive the REAL CLI with a deliberately SLOW distill step so the run
+    // stays in flight long enough to OBSERVE the run-log gaining steps before the
+    // process exits. (This is the "drive the actual writer" test the review asked
+    // for — review finding #6 — so this class of drift can't recur.)
+    const runId = "2026-06-11T09:30:00.000Z";
+    const runDir = join(ctx.runsDir, runId.replace(/[:]/g, "-"));
+    const logPath = join(runDir, "run-log.json");
+
+    // A distill stub that BUSY-WAITS so the run stays in flight (INDEX logged +
+    // persisted) for a generous, observable window while distill is "running".
+    // A busy-wait (not setTimeout) guarantees spawnSync blocks deterministically.
+    const slowDistill = join(ctx.dir, "slow-distill.ts");
+    await writeFile(
+      slowDistill,
+      "const end = Date.now() + 1200;\nwhile (Date.now() < end) {}\nconsole.log('# stub');\n",
+    );
+
+    const child = Bun.spawn(
+      [
+        "bun",
+        "harness/feed-run/scripts/feed-run.ts",
+        "--index-path", ctx.indexPath,
+        "--ledger", ctx.ledgerPath,
+        "--runs-dir", ctx.runsDir,
+        "--run-log", ctx.runLogPath,
+        "--preferences", ctx.prefsPath,
+        "--artifacts-dir", join(ctx.dir, "artifacts"),
+        "--dry-run", "--since", "2026-06-07", "--run-id", runId,
+      ],
+      {
+        cwd: REPO,
+        env: { ...process.env, TRANSCRIPT_DIRS: ctx.transcriptsDir, FEED_RUN_DISTILL_CMD: slowDistill },
+        // IGNORE the child's streams: an undrained "pipe" can fill the OS buffer
+        // and stall the child mid-run, corrupting the timing this test depends on.
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
+
+    // Poll run-log.json WHILE the run is in flight. Capture the first state that
+    // has the `index` step logged but is NOT yet terminal (no `outcome`). That
+    // state is only observable if writes are incremental.
+    let sawIncremental = false;
+    let sawEmptyT0 = false;
+    const observed: string[] = [];
+    // Generous: under full-suite parallelism the child's bun boot alone can
+    // eat several seconds before the index step ever runs. The break below
+    // fires the moment the partial is visible, so the common case stays fast.
+    const deadline = Date.now() + 25_000;
+    while (Date.now() < deadline) {
+      try {
+        const j = JSON.parse(await readFile(logPath, "utf8")) as {
+          steps?: { step: string }[];
+          outcome?: string;
+        };
+        const steps = j.steps ?? [];
+        const sig = steps.map((s) => s.step).join(",") + "|" + (j.outcome ?? "-");
+        if (observed[observed.length - 1] !== sig) observed.push(sig);
+        if (steps.length === 0 && j.outcome === undefined) sawEmptyT0 = true;
+        if (steps.some((s) => s.step === "index") && j.outcome === undefined) {
+          sawIncremental = true;
+          break;
+        }
+      } catch {
+        // not written yet / mid-rename — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    await child.exited;
+    void observed;
+
+    // The mid-run partial was observable (the bar can tick). This is the
+    // load-bearing invariant: a non-terminal run-log with `index` logged can only
+    // exist if writes are incremental (the old code wrote run-log ONCE, at the end).
+    expect(sawIncremental).toBe(true);
+    // sawEmptyT0 (the run dir + empty-steps run-log materializing before ANY step)
+    // is also produced — proven by the real-orchestrator poll — but it is a sub-ms
+    // window the index step overtakes immediately, so we don't assert on it here
+    // (timing-fragile). Logged for visibility only.
+    void sawEmptyT0;
+
+    // And the FINAL run-log is the authoritative terminal write at the SAME path.
+    const finalLog = JSON.parse(await readFile(logPath, "utf8")) as {
+      outcome?: string;
+      steps?: { step: string }[];
+    };
+    expect(finalLog.outcome).toBe("completed");
+    expect(finalLog.steps?.map((s) => s.step)).toEqual([
+      "index", "distill", "query-recency", "query-deepdive", "brief", "generate", "save",
+    ]);
+    // e2e: spawns the real CLI with a deliberately slow distill step — the
+    // default 5s budget flakes when the full suite runs files in parallel.
+  }, 30_000);
+
   test("--run-id is honored (the Generate button picks the id; orchestrator writes that dir)", async () => {
     const runId = "2026-06-11T07:00:00.000Z";
     const { status } = runCli(ctx, ["--dry-run", "--since", "2026-06-07", "--run-id", runId]);

@@ -22,6 +22,7 @@ import {
   isValidRunId,
   parseGenerateBody,
   readRunStatus,
+  readRunProgress,
   startGeneration,
   type GenerateConfig,
 } from "./generate.ts";
@@ -349,9 +350,13 @@ export function createApp(opts: AppOptions): Hono<AuthEnv> {
     // any path join. The strict allowlist (ISO-timestamp charset, no `..`, no
     // slash) makes `GET /api/generate/..%2f..%2fsecret` a 400, not a path read.
     if (!isValidRunId(runId)) return c.json({ error: "invalid run_id" }, 400);
+    // `readRunStatus` is the 404 oracle (an id with no run dir → "unknown"); the
+    // richer progress object drives the staged UI. The progress reader counts
+    // fresh artifacts under the SAME artifactsDir the feed serves from.
     const status = await readRunStatus(runId, generateConfig);
     if (status.status === "unknown") return c.json({ error: "run not found" }, 404);
-    return c.json(status);
+    const progress = await readRunProgress(runId, { ...generateConfig, artifactsDir });
+    return c.json(progress);
   });
 
   app.get("/api/cards", async (c) => {

@@ -152,6 +152,191 @@ button {
   }
 }
 
+/* done confirmation keeps the quiet-link skin, accent text */
+.gen-done {
+  color: var(--accent);
+  border-bottom-color: transparent;
+}
+
+/* ---- REAL generation progress (replaces the indefinite spinner) ---------
+   A staged track + an honest bar + a live activity line. Editorial/hairline,
+   accent reserved for the active cursor + fill. Phone-responsive (the track
+   wraps; on the narrowest viewports the labels compress). */
+.gen-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 100%;
+  max-width: 360px;
+  padding: 4px 0 2px;
+  font-family: var(--sans);
+}
+
+/* the stage track — a row of pills with hairline separators */
+.gen-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.gen-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--mono);
+  color: var(--ink-3);
+  transition: color 200ms ease-out;
+}
+.gen-stage-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  font-size: 8px;
+  line-height: 1;
+}
+.gen-stage--pending {
+  opacity: 0.55;
+}
+.gen-stage--done {
+  color: var(--ink-2);
+}
+.gen-stage--done .gen-stage-mark {
+  border-color: var(--ink-2);
+  color: var(--ink-2);
+}
+.gen-stage--active {
+  color: var(--accent);
+}
+.gen-stage--active .gen-stage-mark {
+  border-color: var(--accent);
+  position: relative;
+}
+/* a gentle pulse on the active stage's mark (real cursor, not fake motion) */
+.gen-stage--active .gen-stage-mark::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: gen-pulse 1100ms ease-in-out infinite;
+}
+.gen-stage--failed {
+  color: var(--accent);
+}
+.gen-stage--failed .gen-stage-mark {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+@keyframes gen-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* the honest fill bar */
+.gen-bar {
+  height: 3px;
+  width: 100%;
+  background: var(--hairline);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.gen-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* the live activity line */
+.gen-progress-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.gen-progress-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: gen-pulse 1100ms ease-in-out infinite;
+}
+.gen-progress-dot--error {
+  background: var(--accent);
+  animation: none;
+}
+.gen-progress-activity {
+  font-size: 12.5px;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+.gen-progress-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+
+/* error / stalled terminal state */
+.gen-progress--error .gen-progress-activity {
+  color: var(--ink-2);
+}
+.gen-retry {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  min-height: 30px;
+  cursor: pointer;
+  transition: border-color 180ms ease-out;
+}
+.gen-retry:hover,
+.gen-retry:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gen-stage--active .gen-stage-mark::after,
+  .gen-progress-dot {
+    animation-duration: 2400ms;
+  }
+}
+
+@media (max-width: 420px) {
+  .gen-progress {
+    max-width: 100%;
+  }
+  .gen-track {
+    gap: 3px 7px;
+  }
+  .gen-stage {
+    font-size: 9px;
+  }
+}
+
 /* mono micro-affordance (active tag chip, etc.) */
 .mono-chip {
   position: relative;
