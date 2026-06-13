@@ -19,6 +19,7 @@ import { writeFile } from "node:fs/promises";
 import {
   FalError,
   generateVideo,
+  isValidDuration,
   uploadToFalStorage,
   type AspectRatio,
   type VideoDuration,
@@ -57,8 +58,8 @@ for (let i = 0; i < args.length; i++) {
     aspect = a;
   } else if (arg === "--duration") {
     const d = args[++i];
-    if (!d) usage();
-    duration = d as VideoDuration;
+    if (!isValidDuration(d)) usage();
+    duration = d;
   } else if (arg === "--resolution") {
     const r = args[++i];
     if (r !== "480p" && r !== "720p" && r !== "1080p") usage();

@@ -14,6 +14,8 @@ import {
   buildCaptionArgs,
   buildDrawtextFilter,
   DEFAULT_FONT,
+  isSafeFontColor,
+  isSafeFontPath,
 } from "../skills/make-clip/scripts/caption.ts";
 import {
   buildAudioArgs,
@@ -164,6 +166,30 @@ describe("buildDrawtextFilter", () => {
   test("rejects non-positive duration/fade", () => {
     expect(() => buildDrawtextFilter({ text: "x", durationSeconds: 0 }, "/t")).toThrow("duration");
     expect(() => buildDrawtextFilter({ text: "x", durationSeconds: 5, fade: 0 }, "/t")).toThrow("fade");
+  });
+});
+
+describe("font/color charset guards (filtergraph metacharacter defense)", () => {
+  test("isSafeFontPath accepts normal font paths, rejects graph metacharacters", () => {
+    expect(isSafeFontPath(DEFAULT_FONT)).toBe(true);
+    expect(isSafeFontPath("/path/to/My Font-Bold.ttf")).toBe(true);
+    // ffmpeg filtergraph specials must all be rejected: : \ ' [ ] ,
+    expect(isSafeFontPath("/f.ttf:fontcolor=red")).toBe(false); // option-injection
+    expect(isSafeFontPath("/f.ttf,drawbox=...")).toBe(false); // filter-chain injection
+    expect(isSafeFontPath("/f.ttf'")).toBe(false);
+    expect(isSafeFontPath("/f[0].ttf")).toBe(false);
+    expect(isSafeFontPath("/f\\.ttf")).toBe(false);
+  });
+
+  test("isSafeFontColor accepts names and hex (with @alpha), rejects metacharacters", () => {
+    expect(isSafeFontColor("white")).toBe(true);
+    expect(isSafeFontColor("yellow")).toBe(true);
+    expect(isSafeFontColor("#FF0000")).toBe(true);
+    expect(isSafeFontColor("white@0.8")).toBe(true);
+    expect(isSafeFontColor("red:x=0")).toBe(false); // colon -> option injection
+    expect(isSafeFontColor("red,crop=1")).toBe(false); // comma -> filter injection
+    expect(isSafeFontColor("red'")).toBe(false);
+    expect(isSafeFontColor("")).toBe(false);
   });
 });
 

@@ -7,11 +7,14 @@ import {
   FalError,
   GPT_IMAGE_2,
   QUEUE_BASE,
+  isValidDuration,
   runQueueJob,
   SEEDANCE_2,
   STORAGE_BASE,
   uploadToFalStorage,
+  VALID_DURATIONS,
   validateImageSize,
+  type VideoDuration,
 } from "../skills/_shared/lib/fal.ts";
 
 // ---------------------------------------------------------------------------
@@ -118,6 +121,44 @@ describe("buildVideoRequestBody", () => {
     const ten = Array.from({ length: 10 }, (_, i) => `https://a/${i}.png`);
     expect(() => buildVideoRequestBody({ prompt: "p", imageUrls: ten })).toThrow("at most 9");
     expect(() => buildVideoRequestBody({ prompt: "p", imageUrls: [""] })).toThrow("non-empty");
+  });
+
+  test("rejects an out-of-enum duration with a FalError (defensive library guard)", () => {
+    const call = () =>
+      buildVideoRequestBody({
+        prompt: "p",
+        imageUrls: ["https://a/x.png"],
+        // Force a bad value past the type system the way a JS caller could.
+        duration: "20" as unknown as VideoDuration,
+      });
+    expect(call).toThrow(FalError);
+    expect(call).toThrow("duration must be one of");
+  });
+
+  test("accepts every documented duration value, plus 'auto'", () => {
+    for (const d of VALID_DURATIONS) {
+      const body = buildVideoRequestBody({ prompt: "p", imageUrls: ["https://a/x.png"], duration: d });
+      expect(body.duration).toBe(d);
+    }
+  });
+});
+
+describe("isValidDuration / VALID_DURATIONS (shared source of truth)", () => {
+  test("VALID_DURATIONS is '4'..'15' plus 'auto'", () => {
+    expect(VALID_DURATIONS).toEqual([
+      "4", "5", "6", "7", "8", "9", "10",
+      "11", "12", "13", "14", "15", "auto",
+    ]);
+  });
+  test("accepts in-enum strings, rejects everything else", () => {
+    expect(isValidDuration("4")).toBe(true);
+    expect(isValidDuration("15")).toBe(true);
+    expect(isValidDuration("auto")).toBe(true);
+    expect(isValidDuration("3")).toBe(false);
+    expect(isValidDuration("16")).toBe(false);
+    expect(isValidDuration("")).toBe(false);
+    expect(isValidDuration(undefined)).toBe(false);
+    expect(isValidDuration(15)).toBe(false); // number, not the string enum
   });
 });
 
@@ -247,8 +288,47 @@ describe("runQueueJob", () => {
       return Response.json({ request_id: "r", status_url: "https://q/status", response_url: "https://q/r" });
     });
     await expect(
+      runQueueJob(GPT_IMAGE_2, { prompt: "x" }, { apiKey: "k", sleep: noSleep, timeoutMs: 0 }),
+    ).rejects.toThrow("timeout");
+  });
+
+  test("a non-positive timeout bails immediately with NO status fetch (deadline checked before fetch/sleep)", async () => {
+    const seen = mockFetch((url) => {
+      if (url.includes("/status")) return Response.json({ status: "IN_PROGRESS" });
+      return Response.json({ request_id: "r", status_url: "https://q/status", response_url: "https://q/r" });
+    });
+    await expect(
       runQueueJob(GPT_IMAGE_2, { prompt: "x" }, { apiKey: "k", sleep: noSleep, timeoutMs: -1 }),
     ).rejects.toThrow("timeout");
+    // Only the submit POST happened — the deadline check at the top of the
+    // loop short-circuits before any status_url poll.
+    expect(seen.calls.length).toBe(1);
+    expect(seen.calls[0]!.url).toBe(`${QUEUE_BASE}/${GPT_IMAGE_2}`);
+    expect(seen.calls.some((c) => c.url.includes("/status"))).toBe(false);
+  });
+
+  test("an already-COMPLETED job is detected on the first poll with no upfront sleep", async () => {
+    let slept = 0;
+    const seen = mockFetch((url) => {
+      if (url.includes("/status")) return Response.json({ status: "COMPLETED" });
+      if (url === "https://q/r")
+        return Response.json({ images: [{ url: "https://cdn/out.png", content_type: "image/png" }] });
+      return Response.json({ request_id: "r", status_url: "https://q/status", response_url: "https://q/r" });
+    });
+    const result = await runQueueJob(
+      GPT_IMAGE_2,
+      { prompt: "x" },
+      { apiKey: "k", sleep: async () => { slept++; } },
+    );
+    expect(result.media[0]?.url).toBe("https://cdn/out.png");
+    // No sleep before the first (and only) status fetch.
+    expect(slept).toBe(0);
+    // submit -> one status poll -> response fetch.
+    expect(seen.calls.map((c) => c.url)).toEqual([
+      `${QUEUE_BASE}/${GPT_IMAGE_2}`,
+      "https://q/status?logs=1",
+      "https://q/r",
+    ]);
   });
 });
 

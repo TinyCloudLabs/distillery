@@ -75,11 +75,11 @@ const videoName = basename(videoFile);
 const media: Record<string, Uint8Array> = {
   [videoName]: new Uint8Array(videoBytes),
 };
-// The artifact's `body` references the mp4 file name; the feed plays it.
-// (No dedicated `video` field in the contract yet — flagged as a feed
-// follow-up in SKILL.md; for now the mp4 file name is recorded in `audio`
-// is WRONG semantically, so we leave media in the folder and record the file
-// name in a tag + body. The feed wiring follow-up adds a typed video field.)
+// The contract has no typed `video` field yet. The mp4 lives in the artifact
+// folder alongside the json, and its file name is recorded as a `video:<file>`
+// tag (the feed serves /media/<...> for any file in the artifact dir). The
+// feed-wiring follow-up (see SKILL.md) adds a typed video field; until then the
+// tag is the contract-clean way to point at the clip.
 raw.tags = Array.isArray(raw.tags) ? raw.tags : [];
 const tags = raw.tags as string[];
 if (!tags.includes(`video:${videoName}`)) tags.push(`video:${videoName}`);

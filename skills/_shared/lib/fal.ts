@@ -44,10 +44,22 @@ export type ImageSize =
 
 export type ImageQuality = "auto" | "low" | "medium" | "high";
 
-/** Seedance duration is a string enum on the wire, not a number. */
-export type VideoDuration =
-  | "4" | "5" | "6" | "7" | "8" | "9" | "10"
-  | "11" | "12" | "13" | "14" | "15" | "auto";
+/**
+ * Seedance duration is a string enum on the wire, not a number: "4"–"15" or
+ * "auto". VALID_DURATIONS is the single source of truth shared by both the
+ * library guard (buildVideoRequestBody) and the generate-video CLI parser.
+ */
+export const VALID_DURATIONS = [
+  "4", "5", "6", "7", "8", "9", "10",
+  "11", "12", "13", "14", "15", "auto",
+] as const;
+
+export type VideoDuration = (typeof VALID_DURATIONS)[number];
+
+/** Type guard: is `v` one of the Seedance-supported duration values? */
+export function isValidDuration(v: unknown): v is VideoDuration {
+  return typeof v === "string" && (VALID_DURATIONS as readonly string[]).includes(v);
+}
 
 export type VideoResolution = "480p" | "720p" | "1080p";
 
@@ -164,6 +176,14 @@ export function buildVideoRequestBody(req: VideoRequest): Record<string, unknown
       throw new Error("fal video: every image_url must be a non-empty string");
     }
   }
+  // Defensive: never put an out-of-enum duration on the wire, regardless of
+  // caller (the CLI validates too, but the library must be safe standalone).
+  if (req.duration !== undefined && !isValidDuration(req.duration)) {
+    throw new FalError(
+      `fal video: duration must be one of ${VALID_DURATIONS.join(", ")}, got ${JSON.stringify(req.duration)}`,
+      { stage: SEEDANCE_2 },
+    );
+  }
   const body: Record<string, unknown> = {
     prompt: req.prompt,
     image_urls: req.imageUrls,
@@ -269,7 +289,14 @@ export async function runQueueJob(
 
   const started = Date.now();
   for (;;) {
-    await sleep(pollIntervalMs);
+    // Check the deadline at the TOP, before any fetch or sleep: a timeoutMs<=0
+    // bails immediately with no network call, and the deadline never overshoots
+    // by a full poll interval + round-trip.
+    if (Date.now() - started > timeoutMs) {
+      throw new FalError(`timeout after ${Math.round(timeoutMs / 1000)}s`, { stage });
+    }
+    // Fetch first (an already-complete job is detected without an upfront
+    // sleep), then sleep before the next iteration.
     const sRes = await fetch(`${submitted.status_url}?logs=1`, { headers });
     if (!sRes.ok) {
       const text = await sRes.text().catch(() => sRes.statusText);
@@ -288,9 +315,7 @@ export async function runQueueJob(
         { stage },
       );
     }
-    if (Date.now() - started > timeoutMs) {
-      throw new FalError(`timeout after ${Math.round(timeoutMs / 1000)}s`, { stage });
-    }
+    await sleep(pollIntervalMs);
   }
 
   const rRes = await fetch(submitted.response_url, { headers });

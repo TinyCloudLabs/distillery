@@ -44,6 +44,30 @@ export interface CaptionStyle {
 
 export const DEFAULT_FONT = "/System/Library/Fonts/HelveticaNeue.ttc";
 
+// ffmpeg parses the filtergraph argument itself: inside it, the characters
+// : \ ' [ ] , are special (option/filter separators and escapes). The caption
+// TEXT is safely externalized via `textfile=` so it never enters the graph,
+// but `fontfile`, `fontcolor`, and the textfile PATH are concatenated raw into
+// the single -vf argument. We control the textfile path (a tmpdir UUID, see
+// below), so the residual untrusted-ish inputs are --font and --color: gate
+// both to a charset that cannot contain any filtergraph metacharacter.
+//   - fontcolor: ffmpeg color names ([a-zA-Z]) or #RRGGBB[AA] hex, optionally
+//     with an @alpha suffix (e.g. "white@0.8"). Allow [A-Za-z0-9#@.].
+//   - fontfile: an absolute/relative filesystem path with no graph specials.
+//     Allow path-safe chars: letters, digits, / . _ - and space.
+const SAFE_COLOR = /^[A-Za-z0-9#@.]+$/;
+const SAFE_FONT_PATH = /^[A-Za-z0-9/._ -]+$/;
+
+/** True when `color` is a filtergraph-safe ffmpeg color token. */
+export function isSafeFontColor(color: string): boolean {
+  return SAFE_COLOR.test(color);
+}
+
+/** True when `path` is a filtergraph-safe font-file path (no graph specials). */
+export function isSafeFontPath(path: string): boolean {
+  return SAFE_FONT_PATH.test(path);
+}
+
 /**
  * Build the drawtext filtergraph string. Pure so tests pin it exactly. The
  * alpha ramps 0→0.9 over [start, start+fade] and holds, matching the
@@ -57,6 +81,11 @@ export function buildDrawtextFilter(style: CaptionStyle, textFilePath: string): 
   const fontFile = style.fontFile ?? DEFAULT_FONT;
   if (style.durationSeconds <= 0) throw new Error("caption: durationSeconds must be > 0");
   if (fade <= 0) throw new Error("caption: fade must be > 0");
+  // ASSUMPTION: textFilePath is a tmpdir UUID path we generate ourselves
+  // (join(tmpdir(), `make-clip-caption-${crypto.randomUUID()}.txt`)), so it is
+  // free of filtergraph metacharacters by construction and safe to concatenate
+  // raw. fontFile/fontColor are CLI-supplied and are charset-gated at the call
+  // site (isSafeFontPath / isSafeFontColor) before reaching this builder.
   const start = Math.max(0, style.durationSeconds - hold);
   // Bottom third, centered. alpha clips into [0, 0.9] across the fade window.
   const alpha = `0.9*clip((t-${start.toFixed(3)})/${fade.toFixed(3)}\\,0\\,1)`;
@@ -112,9 +141,9 @@ if (import.meta.main) {
     else if (arg === "--duration") { duration = Number(args[++i]); if (Number.isNaN(duration)) usage(); }
     else if (arg === "--hold") { hold = Number(args[++i]); if (Number.isNaN(hold)) usage(); }
     else if (arg === "--fade") { fade = Number(args[++i]); if (Number.isNaN(fade)) usage(); }
-    else if (arg === "--font") { font = args[++i]; if (!font) usage(); }
+    else if (arg === "--font") { font = args[++i]; if (!font || !isSafeFontPath(font)) usage(); }
     else if (arg === "--fontsize") { fontSize = Number(args[++i]); if (Number.isNaN(fontSize)) usage(); }
-    else if (arg === "--color") { color = args[++i]; if (!color) usage(); }
+    else if (arg === "--color") { color = args[++i]; if (!color || !isSafeFontColor(color)) usage(); }
     else if (arg.startsWith("--")) usage();
     else if (!input) input = arg;
     else usage();
