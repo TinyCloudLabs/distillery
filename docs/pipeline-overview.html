@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Artifact Pipeline — Current vs Ideal</title>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --panel: #ffffff;
+    --ink: #1c1b19;
+    --muted: #6b675f;
+    --line: #e3ded3;
+    --accent: #c8521f;        /* signal orange */
+    --blue: #1f5fc8;
+    --green: #1f7a4d;
+    --amber: #b8860b;
+    --built: #1f7a4d;
+    --planned: #1f5fc8;
+    --progress: #b8860b;
+    --code-bg: #f3efe6;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 8px 24px rgba(0,0,0,.04);
+    font-synthesis: none;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px 120px; }
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    background:
+      radial-gradient(1200px 300px at 15% -40%, rgba(200,82,31,.08), transparent),
+      var(--panel);
+    padding: 40px 0 30px;
+    margin-bottom: 8px;
+  }
+  header.hero .wrap { padding-bottom: 0; }
+  .eyebrow {
+    text-transform: uppercase; letter-spacing: .14em; font-size: 12px;
+    color: var(--accent); font-weight: 700; margin: 0 0 8px;
+  }
+  h1 { font-size: 34px; line-height: 1.1; margin: 0 0 10px; letter-spacing: -.02em; }
+  .lede { color: var(--muted); max-width: 760px; font-size: 17px; margin: 0; }
+  .meta-row { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line);
+    background: #fff; color: var(--muted); white-space: nowrap;
+  }
+  nav.toc {
+    position: sticky; top: 0; z-index: 20; background: rgba(251,250,247,.92);
+    backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
+    margin-bottom: 28px;
+  }
+  nav.toc .wrap { padding: 10px 24px; display: flex; gap: 18px; flex-wrap: wrap; }
+  nav.toc a { color: var(--muted); text-decoration: none; font-size: 13.5px; font-weight: 500; }
+  nav.toc a:hover { color: var(--accent); }
+
+  section { margin: 46px 0; scroll-margin-top: 64px; }
+  h2 { font-size: 24px; letter-spacing: -.01em; margin: 0 0 6px; }
+  h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 10px; }
+  .sub { color: var(--muted); margin: 0 0 18px; max-width: 820px; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 22px;
+  }
+  .diagram-host { overflow: auto; padding: 8px 4px; }
+  .diagram-host svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  .diagram-fallback {
+    color: #9a2; font-size: 13px; padding: 14px; border: 1px dashed var(--line);
+    border-radius: 8px; background: var(--code-bg); white-space: pre-wrap;
+  }
+  figcaption {
+    margin-top: 12px; color: var(--muted); font-size: 13.5px; border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+  figure { margin: 0; }
+
+  code, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; font-size: 13px; }
+  :not(pre) > code {
+    background: var(--code-bg); padding: 1px 5px; border-radius: 5px; color: #7a3b16;
+    word-break: break-word;
+  }
+
+  table.grid { border-collapse: collapse; width: 100%; font-size: 14px; }
+  table.grid th, table.grid td {
+    border: 1px solid var(--line); padding: 9px 11px; text-align: left; vertical-align: top;
+  }
+  table.grid th { background: var(--code-bg); font-weight: 700; }
+  table.grid tr:nth-child(even) td { background: #fcfbf8; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 880px) { .two-col { grid-template-columns: 1fr; } }
+  .col h3 { margin: 0 0 8px; font-size: 16px; }
+  .col .tag { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 4px 0 0; }
+  .legend .item { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
+  .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .dot.built { background: var(--built); }
+  .dot.planned { background: var(--planned); }
+  .dot.progress { background: var(--progress); }
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; padding: 1px 7px; border-radius: 999px; vertical-align: middle;
+  }
+  .badge.built { background: rgba(31,122,77,.12); color: var(--built); }
+  .badge.planned { background: rgba(31,95,200,.12); color: var(--planned); }
+  .badge.progress { background: rgba(184,134,11,.14); color: var(--progress); }
+
+  .callout {
+    border-left: 3px solid var(--accent); background: #fff8f3; padding: 12px 16px; border-radius: 0 8px 8px 0;
+    margin: 16px 0; font-size: 14.5px;
+  }
+  .callout.warn { border-left-color: var(--amber); background: #fdfaef; }
+  .callout.delta { border-left-color: var(--blue); background: #f3f7fd; }
+  .callout strong { color: var(--ink); }
+
+  ul.tight { margin: 8px 0; padding-left: 20px; }
+  ul.tight li { margin: 4px 0; }
+
+  .pathref { color: #7a3b16; }
+  footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; margin-top: 50px; }
+  .render-note {
+    font-size: 12.5px; color: var(--muted); margin-top: 10px; padding: 8px 12px;
+    background: var(--code-bg); border-radius: 8px; display: inline-block;
+  }
+  .anchor-list code { display: inline-block; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Distillery · Artifact Pipeline</p>
+    <h1>The Artifact Pipeline — Current vs Ideal</h1>
+    <p class="lede">
+      How transcripts become shareable artifacts today, and where the pipeline is heading: from
+      local-disk-only generation to a TinyCloud-hosted producer/consumer loop. Every box and arrow
+      below is traced to a real file, skill, or a recorded decision. Where the code and the plan
+      disagree, the code is shown as <em>current</em> and the plan as <em>ideal</em>, and the delta is flagged.
+    </p>
+    <div class="meta-row">
+      <span class="pill">repo: <code>distillery</code></span>
+      <span class="pill">branch: <code>feat/artifact-pipeline</code></span>
+      <span class="pill">contract: <code>skills/_shared/lib/artifact.ts</code></span>
+      <span class="pill">registry: <code>skills/_shared/lib/formats.ts</code></span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc">
+  <div class="wrap">
+    <a href="#legend">Legend</a>
+    <a href="#current">1 · Current flow</a>
+    <a href="#ideal">2 · Ideal flow</a>
+    <a href="#delegation">3 · Delegation handshake</a>
+    <a href="#lifecycle">4 · Artifact lifecycle</a>
+    <a href="#model">5 · Data model</a>
+    <a href="#gap">6 · Gap table</a>
+    <a href="#deltas">7 · Code↔plan deltas</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- LEGEND -->
+  <section id="legend">
+    <h2><span class="num">§0</span>Legend &amp; status key</h2>
+    <p class="sub">Status reflects what exists in the <code>distillery</code> repo today vs. what the
+      consolidated plan calls for. "In-progress" items are open work tracked on the team (js-sdk CLI
+      write-path fixes and the applications-space host verb).</p>
+    <div class="panel">
+      <div class="legend">
+        <span class="item"><span class="dot built"></span><strong>BUILT</strong>&nbsp;— exists in the repo / verified working</span>
+        <span class="item"><span class="dot planned"></span><strong>PLANNED</strong>&nbsp;— in the plan, not yet coded</span>
+        <span class="item"><span class="dot progress"></span><strong>IN-PROGRESS</strong>&nbsp;— open PR / spike landed, not merged</span>
+      </div>
+      <p class="render-note" id="render-note">Diagram engine: detecting…</p>
+    </div>
+  </section>
+
+  <!-- 1. CURRENT FLOWCHART -->
+  <section id="current">
+    <h2><span class="num">§1</span>Current state — local disk, no TinyCloud</h2>
+    <p class="sub">
+      Today the pipeline is entirely local. Transcripts come from local directories
+      (<code>$TRANSCRIPT_DIRS</code>); skills do <em>extract → triage → draft → critic →
+      verify-quotes → save</em> and write <code>artifacts/&lt;type&gt;/&lt;slug&gt;/artifact.json</code>
+      to local disk; the Folio feed is a local <code>hono</code> server that scans that disk on every
+      request. <strong>There is no TinyCloud integration in the running code.</strong>
+    </p>
+    <div class="panel">
+      <figure>
+        <div class="diagram-host" data-bm="current"></div>
+        <figcaption>
+          <strong>All BUILT.</strong> Orchestration: <code>harness/feed-run/scripts/feed-run.ts</code> runs the
+          deterministic plumbing (index → distill-aggregate → query → brief, <em>no model calls</em>) and spawns a
+          headless <code>claude -p</code> generation agent via <code>run-generation.ts</code>. The agent runs the
+          miner skills, each with its own novelty-scan + adversarial critic, then <code>save.ts</code> writes to
+          <code>artifacts/</code>. The Folio feed (<code>harness/feed/src/server.ts</code>, hono + OpenKey passkey gate)
+          reads disk via <code>scan.ts</code> (<code>scanArtifacts()</code> — full re-read every scan) and logs the six
+          feedback actions to <code>feedback/events.jsonl</code>, which <code>distill-preferences</code> turns into
+          <code>[learned]</code> bullets in <code>PREFERENCES.md</code> (the backpressure control valve).
+        </figcaption>
+      </figure>
+    </div>
+    <div class="callout delta">
+      <strong>Fidelity note.</strong> The plan sometimes calls the current feed a "Folio PWA that reads
+      artifacts from disk." Accurate, but the running code is more than a static reader: it is an
+      authenticated <code>hono</code> server (OpenKey passkey front-door, <code>/api/*</code> + <code>/media/*</code>
+      gated) that also serves a preferences panel and a <strong>Generate</strong> button
+      (<code>POST /api/generate</code>) which fires the same <code>feed-run</code> recipe on demand. The cards
+      themselves are still scanned from local disk.
+    </div>
+  </section>
+
+  <!-- 2. IDEAL FLOWCHART -->
+  <section id="ideal">
+    <h2><span class="num">§2</span>Ideal state — TinyCloud producer/consumer loop</h2>
+    <p class="sub">
+      Target: both sides talk only through TinyCloud. Listen transcripts are read via <code>tc</code> under a
+      <strong>delegation the agent requests from the user</strong> (the agent holds its own key, delegate
+      mode). Reframed skills produce <code>tweet</code> / <code>article</code> / <code>video</code> artifacts; a new
+      <code>tc-publish</code> step writes them to a <strong>hosted</strong> <code>xyz.tinycloud.artifacts</code>
+      applications space (hybrid SQL rows + KV image blobs). A new pure-client Feed web viewer renders the
+      cards and writes interaction metadata back to SQL; <code>distill-preferences</code> closes the loop. The
+      whole thing is a Smithers workflow with a human-approval gate for outward artifacts.
+    </p>
+    <div class="panel">
+      <figure>
+        <div class="diagram-host" data-bm="ideal"></div>
+        <figcaption>
+          Type remap (plan §"Types v1"): <code>banger-extractor</code> → <strong>tweet</strong>,
+          <code>write-article</code> + <code>illustrate-card</code> hero → <strong>article</strong>, plus a
+          <strong>new video skill</strong> (external YouTube URL + generated title/summary). Reused skills keep their
+          <em>extract → triage → draft → critic → verify-quotes → save</em> loop; only the publish target and the
+          type names change. The approval gate is the existing <code>approval_status: pending</code> seam, promoted
+          into a Smithers <code>&lt;Approval&gt;</code> node for outward artifacts.
+        </figcaption>
+      </figure>
+    </div>
+    <div class="callout">
+      <strong>What's actually new vs. reused.</strong>
+      <span class="badge built">BUILT</span> the miner skills, the artifact contract, the critic/verify loop,
+      <code>distill-preferences</code>.
+      <span class="badge planned">PLANNED</span> <code>tc-listen-read</code> (with delegation request),
+      the <code>video</code> skill, <code>tc-publish</code>, the Smithers workflow + approval gate, the pure-client Feed viewer,
+      and the interaction-metadata write-back.
+      <span class="badge progress">IN-PROGRESS</span> the js-sdk CLI write-path fixes (<code>kv put --space</code>,
+      binary KV round-trip) and the <code>space host</code> verb that makes a hosted <code>applications</code>
+      space reachable headlessly.
+    </div>
+  </section>
+
+  <!-- 3. DELEGATION SEQUENCE -->
+  <section id="delegation">
+    <h2><span class="num">§3</span>The delegation handshake</h2>
+    <p class="sub">
+      How a non-owner agent (its own key) gains read/write into the owner's <code>applications</code> space.
+      Verified end-to-end headless between two local identities (<code>.context/tc-write-delegation-verified.md</code>,
+      Q4). There is <strong>no node-side approval inbox</strong> — the request/grant artifacts are the hand-off medium.
+    </p>
+    <div class="panel">
+      <figure>
+        <div class="mermaid" id="seq-delegation">
+sequenceDiagram
+    autonumber
+    participant AG as Agent (own key, delegate)
+    participant U as User / Owner (root auth)
+    participant TC as tc CLI
+    participant N as TinyCloud Node
+
+    Note over AG,N: Precondition — owner hosts the applications space (space/host SIWE → /delegate — IN-PROGRESS host verb)
+    AG->>TC: tc sql query ... --space applications (real attempt)
+    TC->>N: invoke tinycloud.sql/read
+    N-->>TC: 401 AUTH_UNAUTHORIZED
+    TC-->>AG: error.code + error.hint (exact --cap string)
+    AG->>TC: auth request --cap "...:read,write" --emit req.json
+    Note right of AG: req.json = tinycloud.auth.request (agent sessionDid + requested caps)
+    AG->>U: hand req.json to the owner, wait
+    U->>TC: auth grant req.json --yes  (owner profile)
+    TC->>N: node.delegateTo(agent sessionDid, caps)
+    N-->>TC: signed UCAN (iss=owner, aud=agent)
+    TC-->>U: grant.json (tinycloud.auth.delegation)
+    U->>AG: return grant.json
+    AG->>TC: auth import grant.json
+    AG->>TC: auth retry --last  → covered: true
+    AG->>TC: tc sql/kv ... --space OWNER_SPACE_URI
+    TC->>N: invoke with imported delegation
+    N-->>AG: rows / values (cross-identity read+write)
+        </div>
+        <figcaption>
+          Primitives (all <span class="badge built">TESTED</span>, <code>.context/tc-write-delegation-verified.md</code>):
+          <code>auth request --emit</code> · <code>auth grant</code> · <code>auth import</code> · <code>auth retry --last</code>.
+          Grants expire (default 7d). KV caps need a <strong>trailing slash</strong> and use actions
+          <code>get/put/list/del/metadata</code>; SQL uses <code>read/write</code> with <code>sql query</code> (read) /
+          <code>sql execute</code> (write). If the agent and owner are the <em>same</em> local key, skip the handshake and use
+          <code>auth request --cap "…" --grant --yes</code>.
+        </figcaption>
+      </figure>
+    </div>
+    <div class="callout warn">
+      <strong>Open delta (delegation UX).</strong> The plan wants <code>tc-listen-read</code> to "request a delegation
+      from the user and <em>wait</em>." The verified ground truth: there is no built-in polling URL or hosted approval
+      queue — the agent emits a request artifact, a human runs <code>auth grant</code> out-of-band and returns the grant
+      JSON, then the agent imports it and polls locally with <code>auth retry</code>. The "wait" is a human-in-the-loop file
+      hand-off, not a server round-trip. <em>(PLANNED skill, BUILT primitives.)</em>
+    </div>
+  </section>
+
+  <!-- 4. LIFECYCLE SEQUENCE -->
+  <section id="lifecycle">
+    <h2><span class="num">§4</span>One artifact's lifecycle (ideal)</h2>
+    <p class="sub">
+      A single artifact from transcript to rendered card, threading the existing quality loop through the new
+      TinyCloud publish target and the Smithers approval gate.
+    </p>
+    <div class="panel">
+      <figure>
+        <div class="mermaid" id="seq-lifecycle">
+sequenceDiagram
+    autonumber
+    participant L as Listen (xyz.tinycloud.listen)
+    participant SK as Distillery skill (banger→tweet)
+    participant CR as Critic + verify-quotes
+    participant GATE as Approval gate (Smithers)
+    participant PUB as tc-publish
+    participant ART as xyz.tinycloud.artifacts (SQL+KV)
+    participant FE as Feed viewer (web SDK)
+
+    SK->>L: tc sql query / kv list (via delegation §3)
+    L-->>SK: transcript rows + KV transcript blobs
+    Note over SK: extract → triage → draft (agent judgment — novelty candidate required)
+    SK->>CR: draft artifact.json (drafts/slug.json)
+    CR->>CR: adversarial novelty critic (quality.critic_pass)
+    CR->>L: verify-quotes.ts --stamp (verbatim vs transcript)
+    CR-->>SK: quality.quotes_verified = true
+    alt outward type (tweet)
+        SK->>GATE: approval_status pending
+        GATE->>GATE: human approves (or denies)
+        GATE-->>PUB: approved
+    else internal type (article)
+        SK-->>PUB: publishes directly
+    end
+    PUB->>ART: SQL INSERT row (typed cols + raw_artifact JSON)
+    PUB->>ART: KV put hero image (base64 → string value)
+    FE->>ART: SQL SELECT recent artifacts
+    ART-->>FE: rows + media keys → render tweet/article/video card
+        </div>
+        <figcaption>
+          The quality loop (<em>extract → triage → draft → critic → verify-quotes → save</em>) is
+          <span class="badge built">BUILT</span> in every skill today (e.g.
+          <code>skills/banger-extractor/SKILL.md</code>, <code>verify-quotes.ts</code>). What's
+          <span class="badge planned">PLANNED</span>: replacing the local <code>save.ts</code> disk write with
+          <code>tc-publish</code> (SQL row + KV blob), wrapping outward types in a Smithers
+          <code>&lt;Approval&gt;</code> node, and rendering from SQL in the web-SDK viewer instead of a disk scan.
+        </figcaption>
+      </figure>
+    </div>
+    <div class="callout warn">
+      <strong>Known publish-path caveat.</strong> <code>tc kv put</code> currently has <em>no</em> <code>--space</code>
+      flag (writes the profile's primary space only), and binary via <code>kv put --file</code> round-trips as JSON
+      <code>{"type":"Buffer",…}</code>. The verified workaround is base64-into-a-string-value; the proper fix
+      (<code>kv put --space</code> + binary round-trip) is the <span class="badge progress">IN-PROGRESS</span> js-sdk task.
+      SQL writes into <code>--space applications</code> already work once the space is hosted.
+    </div>
+  </section>
+
+  <!-- 5. DATA MODEL -->
+  <section id="model">
+    <h2><span class="num">§5</span>Data model — contract vs. hybrid SQL schema</h2>
+    <p class="sub">
+      Left: the real <code>Artifact</code> contract from <code>skills/_shared/lib/artifact.ts</code> (today's source
+      of truth — what every skill emits and the feed consumes). Right: the planned hybrid SQL schema from
+      <code>.context/artifact-pipeline-plan.md</code> — typed columns the Feed renders off, plus a
+      <code>raw_artifact</code> JSON column that preserves the full contract verbatim.
+    </p>
+    <div class="two-col">
+      <div class="col panel">
+        <h3><span class="tag" style="color:var(--built)">BUILT — current contract</span><br/>
+          <code>interface Artifact</code> · <span class="pathref">skills/_shared/lib/artifact.ts</span></h3>
+        <table class="grid">
+          <thead><tr><th>field</th><th>type</th><th>notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>id</code></td><td>string</td><td>required; <code>crypto.randomUUID()</code></td></tr>
+            <tr><td><code>type</code></td><td>ArtifactType</td><td>1 of 8 in <code>formats.ts</code> registry</td></tr>
+            <tr><td><code>headline</code></td><td>string</td><td>required</td></tr>
+            <tr><td><code>body</code></td><td>string?</td><td>markdown; article full text</td></tr>
+            <tr><td><code>quote</code> / <code>attribution</code></td><td>string?</td><td>pull-quote face</td></tr>
+            <tr><td><code>tags</code></td><td>string[]</td><td>required (may be empty)</td></tr>
+            <tr><td><code>source_transcripts</code></td><td>string[]</td><td>required, ≥1 path</td></tr>
+            <tr><td><code>source_quotes</code></td><td>SourceQuote[]?</td><td>verbatim anchors {quote, speaker?, transcript, timestamp?}</td></tr>
+            <tr><td><code>hero_image</code> / <code>audio</code></td><td>string?</td><td>media file name, relative to folder</td></tr>
+            <tr><td><code>generated_at</code></td><td>string</td><td>required; ISO 8601</td></tr>
+            <tr><td><code>generation_model</code></td><td>string?</td><td>self-named drafting agent</td></tr>
+            <tr><td><code>quality</code></td><td>ArtifactQuality</td><td>{critic_pass, quotes_verified, notes?}</td></tr>
+            <tr><td><code>approval_status</code></td><td>"pending"|"approved"?</td><td>the routing seam (outward → pending)</td></tr>
+            <tr><td><code>audience</code></td><td>public|investors|internal?</td><td>routing</td></tr>
+            <tr><td><code>platform</code></td><td>string?</td><td>e.g. "x"</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:13px;color:var(--muted);margin:12px 0 0;">
+          Validated by <code>validateArtifact()</code> (plain TS, no zod — keeps skills dependency-free).
+          Outward types default <code>approval_status</code> to <code>pending</code>.
+        </p>
+      </div>
+
+      <div class="col panel">
+        <h3><span class="tag" style="color:var(--planned)">PLANNED — hybrid SQL schema</span><br/>
+          <code>artifacts</code> table · <span class="pathref">.context/artifact-pipeline-plan.md</span></h3>
+        <table class="grid">
+          <thead><tr><th>column</th><th>SQL type</th><th>source field</th></tr></thead>
+          <tbody>
+            <tr><td><code>id</code></td><td>TEXT PK</td><td><code>id</code></td></tr>
+            <tr><td><code>type</code></td><td>TEXT</td><td><code>type</code> (remapped: tweet/article/video)</td></tr>
+            <tr><td><code>title</code></td><td>TEXT</td><td><code>headline</code></td></tr>
+            <tr><td><code>source</code></td><td>TEXT</td><td>from <code>source_transcripts</code></td></tr>
+            <tr><td><code>content</code></td><td>TEXT</td><td><code>body</code> / postable line</td></tr>
+            <tr><td><code>media</code></td><td>TEXT</td><td>KV key for hero/audio, or YouTube URL (video)</td></tr>
+            <tr><td><code>created_at</code></td><td>TEXT/INT</td><td><code>generated_at</code></td></tr>
+            <tr><td><code>raw_artifact</code></td><td>TEXT (JSON)</td><td><strong>the entire <code>Artifact</code> verbatim</strong></td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:13px;color:var(--muted);margin:12px 0 6px;"><strong>Decisions:</strong></p>
+        <ul class="tight" style="font-size:13px;color:var(--muted);">
+          <li>SQL is canonical (stateful, replication-ready); KV holds image blobs.</li>
+          <li>Video = external YouTube URL reference (no media bytes stored).</li>
+          <li>Feed renders off typed columns + the <code>raw_artifact</code> JSON per type.</li>
+          <li>Lives in the owner's <code>applications</code> space under an <code>xyz.tinycloud.artifacts/…</code> db/path prefix (same shape as Listen).</li>
+        </ul>
+        <table class="grid" style="margin-top:10px;">
+          <thead><tr><th colspan="2">interaction-metadata table (fast-follow)</th></tr></thead>
+          <tbody>
+            <tr><td><code>artifact_id</code></td><td>FK → artifacts.id</td></tr>
+            <tr><td><code>action</code></td><td>more|less|save|already_knew|wrong|promote</td></tr>
+            <tr><td><code>note</code> / <code>created_at</code></td><td>free-text / timestamp</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:13px;color:var(--muted);margin:8px 0 0;">
+          Feeds the closed loop: <code>distill-preferences</code> reads these rows → <code>[learned]</code> bullets
+          (reuses the existing six-action machinery from <code>feedback.ts</code>).
+        </p>
+      </div>
+    </div>
+    <div class="callout delta">
+      <strong>Delta.</strong> The current contract has 8 types (<code>insight-card, article, podcast, digest,
+      social-post, investor-update-snippet, quote-card, person-brief</code>). The ideal Feed v1 collapses to
+      <strong>3 render types</strong> (<code>tweet, article, video</code>). The mapping is a presentation concern —
+      <code>raw_artifact</code> preserves the original type and all fields, so no contract data is lost; the SQL
+      <code>type</code> column is the feed's render selector.
+    </div>
+  </section>
+
+  <!-- 6. GAP TABLE -->
+  <section id="gap">
+    <h2><span class="num">§6</span>Current vs Ideal — gap table</h2>
+    <p class="sub">What exists vs. what's planned, with status and the file/decision each row traces to.</p>
+    <div class="panel" style="overflow:auto;">
+      <table class="grid">
+        <thead>
+          <tr><th>Concern</th><th>Current (BUILT)</th><th>Ideal (PLANNED)</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Transcript source</strong></td>
+            <td>Local disk dirs via <code>$TRANSCRIPT_DIRS</code>; <code>index-corpus</code> over <code>.md/.txt</code></td>
+            <td>Listen (<code>xyz.tinycloud.listen</code>, applications space) read via <code>tc</code> + delegation</td>
+            <td><span class="badge built">BUILT</span>→<span class="badge planned">PLANNED</span></td>
+          </tr>
+          <tr>
+            <td><strong>Read access</strong></td>
+            <td>n/a — filesystem read</td>
+            <td><code>tc-listen-read</code> skill; agent own-key, delegate mode; request→grant→import</td>
+            <td><span class="badge planned">PLANNED</span> skill · <span class="badge built">BUILT</span> primitives</td>
+          </tr>
+          <tr>
+            <td><strong>Skills / generation</strong></td>
+            <td>9 skills; extract→triage→draft→critic→verify→save; headless <code>claude -p</code></td>
+            <td>Reuse skills; remap to tweet/article/video; add <code>video</code> skill</td>
+            <td><span class="badge built">BUILT</span> core · <span class="badge planned">PLANNED</span> video + remap</td>
+          </tr>
+          <tr>
+            <td><strong>Quality gate</strong></td>
+            <td>Per-skill adversarial novelty critic + <code>verify-quotes.ts</code>; <code>approval_status</code> seam</td>
+            <td>Same loop + Smithers <code>&lt;Approval&gt;</code> node for outward artifacts</td>
+            <td><span class="badge built">BUILT</span>→<span class="badge planned">PLANNED</span> gate node</td>
+          </tr>
+          <tr>
+            <td><strong>Publish target</strong></td>
+            <td><code>save.ts</code> → <code>artifacts/&lt;type&gt;/&lt;slug&gt;/artifact.json</code> on local disk</td>
+            <td><code>tc-publish</code> → hosted <code>xyz.tinycloud.artifacts</code>: SQL rows + KV image blobs</td>
+            <td><span class="badge planned">PLANNED</span></td>
+          </tr>
+          <tr>
+            <td><strong>Applications-space hosting</strong></td>
+            <td>n/a</td>
+            <td>Owner hosts via <code>space/host</code> SIWE; delegates write to agent's key</td>
+            <td><span class="badge progress">IN-PROGRESS</span> (host verb + node-sdk wrapper)</td>
+          </tr>
+          <tr>
+            <td><strong>CLI write path</strong></td>
+            <td>n/a</td>
+            <td><code>tc sql execute --space</code> (works); <code>tc kv put --space</code> + binary round-trip</td>
+            <td><span class="badge progress">IN-PROGRESS</span> (<code>kv put --space</code> fix)</td>
+          </tr>
+          <tr>
+            <td><strong>Feed viewer</strong></td>
+            <td>Folio: <code>hono</code> server + OpenKey gate, scans disk (<code>scan.ts</code>), Generate button</td>
+            <td>New <strong>pure-client</strong> web-SDK app; signs in, reads SQL, renders 3 card types; no server</td>
+            <td><span class="badge built">BUILT</span> Folio · <span class="badge planned">PLANNED</span> viewer</td>
+          </tr>
+          <tr>
+            <td><strong>Interaction → preferences</strong></td>
+            <td>Feed logs 6 actions → <code>feedback/events.jsonl</code>; <code>distill-preferences</code> → <code>[learned]</code></td>
+            <td>Feed writes interaction rows to SQL; <code>distill-preferences</code> reads SQL (closed loop)</td>
+            <td><span class="badge built">BUILT</span> machinery · <span class="badge planned">PLANNED</span> SQL write-back (fast-follow)</td>
+          </tr>
+          <tr>
+            <td><strong>Orchestration</strong></td>
+            <td><code>feed-run.ts</code> orchestrator (plumbing) + headless agent</td>
+            <td>Smithers workflow: fetch → generate → critic → approval gate → publish</td>
+            <td><span class="badge built">BUILT</span> recipe · <span class="badge planned">PLANNED</span> Smithers wrap</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 7. DELTAS -->
+  <section id="deltas">
+    <h2><span class="num">§7</span>Where the code and the plan diverge</h2>
+    <p class="sub">High-signal mismatches a reader should know about. Code is shown as <em>current</em>; the plan as
+      <em>ideal</em>.</p>
+    <div class="panel anchor-list">
+      <ul class="tight">
+        <li>
+          <strong>Feed is a server, not a static reader.</strong> Plan: "Folio PWA reads artifacts from disk."
+          Code: <code>harness/feed/src/server.ts</code> is an authenticated <code>hono</code> server (OpenKey passkey,
+          gated <code>/api/*</code> + <code>/media/*</code>) with a preferences panel and a Generate button. The ideal
+          viewer is the opposite direction — a <em>pure-client</em> web-SDK app with no server.
+        </li>
+        <li>
+          <strong>Type count: 8 → 3.</strong> Code: <code>formats.ts</code> defines 8 artifact types. Plan: the Feed v1
+          renders 3 (tweet/article/video). No data loss — <code>raw_artifact</code> JSON keeps the full contract; the
+          SQL <code>type</code> column is just the render selector.
+        </li>
+        <li>
+          <strong>"Request delegation and wait" has no server poll.</strong> Plan implies the agent waits on an approval.
+          Verified code: the SDK uses request/grant artifact <em>files</em> (<code>auth request --emit</code> →
+          human <code>auth grant</code> → <code>auth import</code> → local <code>auth retry</code> poll). The wait is a
+          human file hand-off, not a hosted approval queue.
+        </li>
+        <li>
+          <strong>KV write into <code>applications</code> is blocked from the CLI today.</strong> <code>tc kv put</code>
+          ignores <code>--space</code> (primary space only) and binary round-trips as JSON. SQL writes into
+          <code>--space applications</code> work once the space is hosted; KV needs the IN-PROGRESS <code>kv put --space</code> fix
+          (base64-string workaround verified meanwhile).
+        </li>
+        <li>
+          <strong><code>tc space create</code> is dead.</strong> Spike finding (<code>.context/applications-space-hosting.md</code>):
+          there is no <code>tinycloud.space/create</code> handler in the node; hosting goes through a
+          <code>space/host</code> SIWE → <code>/delegate</code>. The owner (root authority) can host its own
+          <code>applications</code> space headlessly — the prior "hosting is impossible" premise was wrong.
+        </li>
+        <li>
+          <strong>Outward comms skills aren't wired into the automated loop yet.</strong> README "routing seam (in flight)":
+          today <code>feed-run</code> drives the internal miners; <code>banger-extractor</code> /
+          <code>investor-snippet</code> / <code>quote-card</code> are invoked directly by an agent, and the approvals
+          surface itself isn't built. The ideal pulls them into the Smithers workflow behind the approval gate.
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      Generated for the <code>feat/artifact-pipeline</code> integration branch. Sources: the <code>distillery</code>
+      repo (current) and <code>.context/{artifact-pipeline-plan, tc-write-delegation-verified, applications-space-hosting}.md</code>
+      (ideal/verified). Diagrams: flowcharts rendered with
+      <a href="https://github.com/lukilabs/beautiful-mermaid">beautiful-mermaid</a> (its supported types);
+      sequence diagrams with mermaid.js (beautiful-mermaid does not support sequence diagrams). Both via pinned CDN —
+      open by double-clicking with an internet connection. See the diagram-engine note in §0.
+    </p>
+  </footer>
+</div>
+
+<!-- ===================== DIAGRAM SCRIPTS ===================== -->
+
+<!-- beautiful-mermaid for the two flowcharts -->
+<script type="module">
+  const BM_THEME = "github-light";
+  const note = document.getElementById("render-note");
+
+  // Flowchart sources — every node label maps to a real file/skill (see figcaptions).
+  const CURRENT = `flowchart TD
+    T["Local transcripts<br/>$TRANSCRIPT_DIRS"] --> IDX["index-corpus<br/>(corpus-index.json)"]
+    IDX --> FR["feed-run.ts<br/>orchestrator (no model calls)"]
+    FR --> BR["run-brief.md"]
+    BR --> GEN["run-generation.ts<br/>headless claude -p"]
+    GEN --> SK["miner skills<br/>extract→draft→critic→verify"]
+    SK --> SAVE["save.ts"]
+    SAVE --> AJ["artifacts/&lt;type&gt;/&lt;slug&gt;/<br/>artifact.json (+ media) on DISK"]
+    AJ --> SCAN["scan.ts scanArtifacts()"]
+    SCAN --> FEED["Folio feed<br/>hono server + OpenKey gate"]
+    FEED --> FB["feedback/events.jsonl<br/>(6 actions)"]
+    FB --> DP["distill-preferences"]
+    DP --> PREF["PREFERENCES.md<br/>learned-tag backpressure"]
+    PREF --> FR`;
+
+  const IDEAL = `flowchart TD
+    L["Listen<br/>xyz.tinycloud.listen<br/>(applications space)"] -->|delegation §3| READ["tc-listen-read<br/>(own key, delegate)"]
+    READ --> SK["distillery skills<br/>banger→tweet · article+illustrate<br/>· new video skill"]
+    SK --> CRIT["critic + verify-quotes"]
+    CRIT --> GATE{"Smithers approval gate<br/>(outward only)"}
+    GATE -->|approved / internal| PUB["tc-publish"]
+    PUB --> ART["xyz.tinycloud.artifacts<br/>HOSTED applications space<br/>SQL rows + KV image blobs"]
+    ART --> VIEW["Feed web viewer<br/>pure-client web SDK"]
+    VIEW --> IM["interaction metadata<br/>→ SQL rows"]
+    IM --> DP["distill-preferences"]
+    DP --> PREF["PREFERENCES.md learned-tag"]
+    PREF --> SK
+    SMITH["Smithers workflow:<br/>fetch→generate→critic→gate→publish"] -.orchestrates.- READ`;
+
+  try {
+    const mod = await import("https://esm.sh/beautiful-mermaid@1.1.3");
+    const { renderMermaidSVG, THEMES } = mod;
+    const theme = THEMES[BM_THEME] ?? mod.DEFAULTS;
+    const opts = { ...theme, font: "Inter, system-ui, sans-serif", padding: 24, nodeSpacing: 36, layerSpacing: 64 };
+    const draw = (sel, src) => {
+      const host = document.querySelector(`[data-bm="${sel}"]`);
+      host.innerHTML = renderMermaidSVG(src, opts);
+    };
+    draw("current", CURRENT);
+    draw("ideal", IDEAL);
+    note.innerHTML = "Diagram engine: flowcharts via <strong>beautiful-mermaid 1.1.3</strong> (esm.sh) · " +
+      "sequence diagrams via <strong>mermaid.js 11</strong> (jsdelivr). " +
+      "Note: beautiful-mermaid supports flowcharts/state only, so sequence diagrams use mermaid.js by necessity.";
+  } catch (e) {
+    note.innerHTML = "beautiful-mermaid failed to load (" + e.message + "). Falling back to mermaid.js for ALL diagrams.";
+    note.style.color = "#9a2";
+    // Fallback: convert the flowchart hosts into mermaid blocks and let mermaid render them.
+    const fb = [["current", CURRENT], ["ideal", IDEAL]];
+    for (const [sel, src] of fb) {
+      const host = document.querySelector(`[data-bm="${sel}"]`);
+      const pre = document.createElement("pre");
+      pre.className = "mermaid";
+      // mermaid wants <br> not <br/>, and bare text; it tolerates the same flowchart syntax.
+      pre.textContent = src.replace(/<br\/>/g, "<br>");
+      host.replaceWith(pre);
+    }
+    window.__bmFallback = true;
+  }
+</script>
+
+<!-- mermaid.js for sequence diagrams (and as the flowchart fallback) -->
+<script type="module">
+  const mermaid = (await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")).default;
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "neutral",
+    securityLevel: "loose",
+    fontFamily: "Inter, system-ui, sans-serif",
+    sequence: { useMaxWidth: true, mirrorActors: false, wrap: true },
+  });
+  // Render every .mermaid block currently on the page (sequences always; flowcharts only if BM fell back).
+  const nodes = Array.from(document.querySelectorAll(".mermaid"));
+  if (nodes.length) {
+    try {
+      await mermaid.run({ nodes });
+    } catch (e) {
+      for (const n of nodes) {
+        if (!n.querySelector("svg")) {
+          const f = document.createElement("div");
+          f.className = "diagram-fallback";
+          f.textContent = "Diagram failed to render:\n\n" + n.textContent;
+          n.replaceWith(f);
+        }
+      }
+    }
+  }
+</script>
+
+</body>
+</html>
