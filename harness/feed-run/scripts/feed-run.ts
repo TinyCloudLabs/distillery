@@ -587,7 +587,19 @@ async function latestGeneratedAtByFormat(): Promise<Partial<Record<InternalFeedF
 }
 let priorRuns = 0;
 try {
-  priorRuns = (await readFile(runLogPath, "utf8")).split("\n").filter(Boolean).length;
+  // Count ORCHESTRATOR entries only: the launchd wrapper appends its own
+  // guard lines ({wrapper_guard, ...}) to the same run-log.jsonl, and counting
+  // those would make the "every Nth run" cadence fire on lines, not runs.
+  priorRuns = (await readFile(runLogPath, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .filter((line) => {
+      try {
+        return !("wrapper_guard" in (JSON.parse(line) as Record<string, unknown>));
+      } catch {
+        return false;
+      }
+    }).length;
 } catch {
   // no run log yet — first run
 }
