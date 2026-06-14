@@ -79,7 +79,8 @@ Env (all optional):
 | `AGENT_CHAIN_ID` | `1` | EVM chain the delegation must target |
 | `AGENT_MAX_DELEGATION_BYTES` | `262144` | size cap on the serialized delegation payload |
 | `TINYCLOUD_HOST` | `https://node.tinycloud.xyz` | node the agent signs into + the delegation targets |
-| `AGENT_STATE_DIR` | `~/.tinycloud-agent` | all runtime state (OUTSIDE the repo on purpose — see "Credential placement"; dir `0700`) |
+| `AGENT_STATE_DIR` | `~/.tinycloud-agent` | CREDENTIALS + tc-home (outside the repo; never `--add-dir`'d — see "Credential placement"; dir `0700`) |
+| `AGENT_RUNS_DIR` | `~/.tinycloud-agent-runs` (or `<AGENT_STATE_DIR>-runs`) | run scratch (corpus/artifacts), a SEPARATE root from credentials so the generate deny doesn't overlap the `--add-dir`'d scratch |
 | `AGENT_TC_PROFILE` | `delegated` | sandbox tc profile the delegation activates |
 | `AGENT_NAME` | `Distillery Agent` | advertised in `/agent/info` |
 | `AGENT_TRANSCRIPT_COUNT` | `5` | Listen transcripts pulled per run |
@@ -133,7 +134,7 @@ env). The tc CLI's config dir is `os.homedir()/.tinycloud` with no env override
 ## The pipeline (`POST /agent/run`)
 
 `bootstrap → listen-read → generate → critic → publish`, all under the
-delegation, into a per-run scratch dir (`<AGENT_STATE_DIR>/runs/<id>/`):
+delegation, into a per-run scratch dir (`<AGENT_RUNS_DIR>/<id>/`):
 
 1. **listen-read** — `tc-listen-read/listen-read.ts` pulls the user's Listen
    transcripts into the run's corpus. **Empty-Listen-safe:** 0 transcripts →
@@ -163,15 +164,23 @@ via `smithers up` on this branch: the local `.smithers` orchestrator pins
 skew that blocks `graph`/`run`). Until the versions align, `/agent/run` runs the
 same stages directly (`runner.ts`).
 
-## Runtime state (`AGENT_STATE_DIR`, default `~/.tinycloud-agent`, dir mode `0700`)
+## Runtime state — TWO separate roots, both outside the repo, dir mode `0700`
+
+**`AGENT_STATE_DIR`** (default `~/.tinycloud-agent`) — CREDENTIALS only:
 
 ```
-agent-key.json              the stable agent wallet key → did:pkh           (0600)
-api-token                   the per-install API bearer token                (0600)
-delegation.json             the last-POSTed serialized delegation (restored on restart)  (0600)
-runs/<run_id>/status.json   per-run state for GET /agent/run/:id
-runs/<run_id>/{corpus,artifacts}/   per-run scratch — WIPED after each run (success + error)
-tc-home/.tinycloud/...      the sandboxed delegated tc profile (profile/key/session.json all 0600)
+agent-key.json     the stable agent wallet key → did:pkh                     (0600)
+api-token          the per-install API bearer token                          (0600)
+delegation.json    the last-POSTed serialized delegation (restored on restart)  (0600)
+tc-home/.tinycloud/...   the sandboxed delegated tc profile (profile/key/session.json all 0600)
+```
+
+**`AGENT_RUNS_DIR`** (default `~/.tinycloud-agent-runs`, or `<AGENT_STATE_DIR>-runs`
+when AGENT_STATE_DIR is overridden) — RUN SCRATCH only:
+
+```
+<run_id>/status.json          per-run state for GET /agent/run/:id
+<run_id>/{corpus,artifacts}/  per-run scratch — WIPED after each run (success + error)
 ```
 
 All credential files are written atomically `0600` inside `0700` dirs, so the
@@ -180,16 +189,23 @@ Per-run scratch (Listen transcripts in `corpus/` + generated `artifacts/`) is
 deleted after every run so the user's raw Listen data doesn't linger;
 `status.json` is kept for polling.
 
-### Credential placement (why the state dir is outside the repo)
+### Credential placement (why TWO roots, both outside the repo)
 
 The generate `claude -p` step is `--add-dir`'d onto the run's corpus + artifacts
-scratch (which live under `AGENT_STATE_DIR`). If the state dir were inside the
-repo, `--add-dir repoRoot` (or cwd=repoRoot) would let a prompt-injected
-transcript Read the agent key / token / delegation via the allowed Read tool.
-So the state dir defaults **outside** the repo (`~/.tinycloud-agent`), the
-generate step `--add-dir`s only `skills/` + the run's corpus + artifacts (never
-`repoRoot`), and adds a path-scoped `Read/Glob/Grep` deny of the state dir.
-**This closes the reported add-dir vector but is not a full filesystem sandbox**
-— claude's Read tool can open arbitrary absolute paths and `bun -e` can read any
-file the process can, so real confinement (separate uid / container / TEE) is the
-phase-2 (Phala) hardening. Keep `AGENT_STATE_DIR` outside any `--add-dir`'d path.
+scratch and told to Read/Write there. So the credentials must live in a
+**different tree** than that scratch:
+
+- `AGENT_STATE_DIR` holds ONLY credentials + `tc-home` → the generate step adds a
+  wholesale `Read/Glob/Grep(<AGENT_STATE_DIR>/**)` deny with **no overlap** with
+  any granted dir.
+- `AGENT_RUNS_DIR` (separate root) holds the corpus/artifacts → these are
+  `--add-dir`'d (readable/writable scratch), not under the credential deny.
+
+The generate step also `--add-dir`s `skills/` + corpus + artifacts only (**never
+`repoRoot`**), and both roots sit outside the repo so neither is reachable via
+`cwd=repoRoot`. **This closes the reported add-dir vector and removes the
+deny/scratch overlap, but is not a full filesystem sandbox** — claude's Read tool
+in `-p` mode can open arbitrary absolute paths and `bun -e` can read any file the
+process can, so real confinement (separate uid / container / TEE) is the phase-2
+(Phala) hardening. Keep `AGENT_STATE_DIR` (credentials) out of any `--add-dir`'d
+path; the scratch root is meant to be `--add-dir`'d.

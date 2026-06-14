@@ -2,21 +2,28 @@
 // anchored to the distillery REPO ROOT (this file is harness/agent/src/, so the
 // repo root is three levels up — same convention as harness/feed/src/server.ts).
 //
-// All agent state lives under a SINGLE dir (AGENT_STATE_DIR, default
-// <home>/.tinycloud-agent — OUTSIDE the repo on purpose):
-//   agent-key.json            — the stable agent wallet key → did:pkh
-//   delegation.json           — the last-POSTed serialized PortableDelegation
-//   api-token                 — the per-install API bearer token
-//   runs/<run_id>/status.json — per-run state for GET /agent/run/:id
-//   tc-home/.tinycloud/...    — the sandboxed tc profile the delegation activates
-//                               (HOME for every skill spawn; never the user's ~)
+// TWO SEPARATE ROOTS, both OUTSIDE the repo:
 //
-// WHY OUTSIDE THE REPO: the generate `claude -p` step is --add-dir'd onto the
-// run's corpus/artifacts scratch (which live under AGENT_STATE_DIR). If the state
-// dir were inside repoRoot, a prompt-injected transcript could Read the agent key
-// / token / delegation via the allowed Read tool. Keeping the whole state tree
-// out of the repo (and never --add-dir'ing its root) puts those credentials
-// beyond the generate child's reach. See runner.ts buildGenerationArgs.
+//   AGENT_STATE_DIR (default <home>/.tinycloud-agent) — CREDENTIALS ONLY:
+//     agent-key.json   — the stable agent wallet key → did:pkh
+//     delegation.json  — the last-POSTed serialized PortableDelegation
+//     api-token        — the per-install API bearer token
+//     tc-home/.tinycloud/... — the sandboxed tc profile (HOME for skill spawns)
+//
+//   AGENT_RUNS_DIR (default <home>/.tinycloud-agent-runs) — RUN SCRATCH ONLY:
+//     <run_id>/status.json        — per-run state for GET /agent/run/:id
+//     <run_id>/{corpus,artifacts} — per-run scratch (wiped after each run)
+//
+// WHY TWO ROOTS (the generate-step credential boundary): the generate `claude -p`
+// step is --add-dir'd onto a run's corpus/artifacts scratch and is told to
+// Read/Write there. The credentials must therefore live in a DIFFERENT tree than
+// the scratch, so the generate child can be given the scratch root while a
+// wholesale Read/Glob/Grep deny of AGENT_STATE_DIR has NO overlap with any
+// --add-dir'd path. (If runs/ lived under AGENT_STATE_DIR, the deny would either
+// block the run's own corpus — broken — or be defeated by the scratch grant.)
+// Both roots stay OUTSIDE repoRoot so neither is reachable via cwd=repoRoot. See
+// runner.ts buildGenerationArgs. (The documented residual: claude's Read tool +
+// `bun -e` can still open arbitrary ABSOLUTE paths — true confinement is phase-2.)
 
 import { resolve } from "node:path";
 import { homedir } from "node:os";
@@ -29,6 +36,13 @@ const agentStateDir = process.env.AGENT_STATE_DIR
   ? resolve(process.env.AGENT_STATE_DIR)
   : resolve(homedir(), ".tinycloud-agent");
 
+// Run scratch lives in its OWN root, NOT under agentStateDir (see header). When
+// AGENT_RUNS_DIR is unset, derive a sibling `<agentStateDir>-runs` — same parent,
+// never nested inside the credential dir, so the deny pattern can't overlap it.
+const runsDir = process.env.AGENT_RUNS_DIR
+  ? resolve(process.env.AGENT_RUNS_DIR)
+  : `${agentStateDir}-runs`;
+
 export const config = {
   /** The distillery checkout the skills run from (cwd of every skill spawn). */
   repoRoot,
@@ -40,8 +54,10 @@ export const config = {
   delegationPath: resolve(agentStateDir, "delegation.json"),
   /** The per-install API bearer token (generated + persisted if unset). */
   apiTokenPath: resolve(agentStateDir, "api-token"),
-  /** Per-run status dir root. */
-  runsDir: resolve(agentStateDir, "runs"),
+  /** Per-run scratch root (status.json + corpus/ + artifacts/) — a SEPARATE root
+   *  from agentStateDir so the generate credential-deny never overlaps the
+   *  --add-dir'd scratch. See the header + runner.ts. */
+  runsDir,
   /** Sandbox HOME for skill spawns — tc reads <home>/.tinycloud. */
   tcHome: resolve(agentStateDir, "tc-home"),
   /** The tc profile name the delegation activates inside the sandbox. */

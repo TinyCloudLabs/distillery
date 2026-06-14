@@ -344,11 +344,14 @@ function buildGenerationArgs(
   //    path-scoped Read/Glob/Grep deny of the agent state dir (best-effort).
   //
   // CREDENTIAL REACH (the fix for the add-dir finding): the agent state dir
-  // (api-token / agent-key.json / delegation.json) now lives OUTSIDE repoRoot
-  // (config.ts default ~/.tinycloud-agent), and we DO NOT --add-dir repoRoot — we
-  // add ONLY the run's corpus + artifacts scratch (+ the skills dir the recipe
-  // runs). cwd stays repoRoot so `bun skills/...` resolves; repo SOURCE is
-  // readable (not secret) but the credential dir is not under cwd or any add-dir.
+  // (api-token / agent-key.json / delegation.json / tc-home) lives OUTSIDE repoRoot
+  // (config.ts default ~/.tinycloud-agent), and the run scratch lives in a SEPARATE
+  // root (config.runsDir, default ~/.tinycloud-agent-runs) — so we can --add-dir
+  // the run's corpus + artifacts (+ the skills dir) while the wholesale
+  // Read/Glob/Grep deny of agentStateDir has NO overlap with any granted dir. We
+  // DO NOT --add-dir repoRoot; cwd stays repoRoot so `bun skills/...` resolves
+  // (repo SOURCE readable, non-secret). The credential dir is under neither cwd
+  // nor any --add-dir.
   //
   // HONEST CAVEAT: claude's Read tool in -p mode can still open arbitrary ABSOLUTE
   // paths, and `bun -e <js>` (bun is required + turing-complete) can read any file
