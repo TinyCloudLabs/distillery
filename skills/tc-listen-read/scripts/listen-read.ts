@@ -34,7 +34,7 @@ const DEFAULT_REQUEST_FILE = "./listen-read-request.json";
 function usage(): never {
   console.error(
     "usage:\n" +
-      "  read:  bun .../listen-read.ts --out DIR [--count N] [--space SPACE] [--owner-space URI]\n" +
+      "  read:  bun .../listen-read.ts --out DIR [--count N] [--space SPACE] [--profile NAME] [--owner-space URI]\n" +
       "  emit:  bun .../listen-read.ts --emit-request [FILE] --owner-space URI",
   );
   process.exit(2);
@@ -44,6 +44,7 @@ let outDir: string | undefined;
 let count = 5;
 let space: string | undefined;
 let ownerSpace: string | undefined;
+let profile: string | undefined;
 let emitRequest = false;
 let requestFile = DEFAULT_REQUEST_FILE;
 
@@ -59,6 +60,12 @@ for (let i = 0; i < args.length; i++) {
   } else if (arg === "--space") {
     space = args[++i];
     if (!space || space.startsWith("--")) usage();
+  } else if (arg === "--profile") {
+    // Read Listen under a specific profile (e.g. `default`, which OWNS the
+    // canonical Listen data) without switching the active profile. Publishing
+    // still runs as the active profile (cli-test owns the artifacts space).
+    profile = args[++i];
+    if (!profile || profile.startsWith("--")) usage();
   } else if (arg === "--owner-space") {
     ownerSpace = args[++i];
     if (!ownerSpace || ownerSpace.startsWith("--")) usage();
@@ -154,7 +161,7 @@ async function surfaceAccessRemediation(e: TcCliError): Promise<void> {
 }
 
 try {
-  const written = await dumpCorpus(count, outDir, { space });
+  const written = await dumpCorpus(count, outDir, { space }, { profile });
   if (written.length === 0) {
     console.error(
       "No non-empty transcripts found. Nothing written. (Check the conversation count / space.)",
