@@ -19,7 +19,7 @@
 
 services:
   agent:
-    image: ${AGENT_IMAGE:-docker.io/skgbafa/distillery-agent:latest}
+    image: ${AGENT_IMAGE:-ghcr.io/tinycloudlabs/distillery-agent:latest}
     restart: unless-stopped
     ports:
       - "4097:4097"
