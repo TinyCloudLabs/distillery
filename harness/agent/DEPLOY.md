@@ -51,7 +51,11 @@ docker push docker.io/<namespace>/distillery-agent:<tag>
 ```
 
 For a **private** repo, add the pull creds to `agent.env` (encrypted by the
-deploy, never in compose): `DSTACK_DOCKER_USERNAME` + `DSTACK_DOCKER_PASSWORD`.
+deploy, never in compose): `DSTACK_DOCKER_USERNAME` + `DSTACK_DOCKER_PASSWORD`,
+**and `DSTACK_DOCKER_REGISTRY=ghcr.io`** — without the registry override the
+dstack pre-launch login defaults to `docker.io` and the GHCR pull fails
+`unauthorized` (verified). The password is a token with `read:packages` (a
+`gh auth token` works).
 
 ## 3. Secrets env file
 
