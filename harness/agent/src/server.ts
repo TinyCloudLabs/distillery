@@ -49,8 +49,8 @@ function corsHeaders(req: Request): Record<string, string> {
     Vary: "Origin",
   };
   const origin = req.headers.get("origin");
-  if (config.allowedOrigin && origin && origin === config.allowedOrigin) {
-    base["Access-Control-Allow-Origin"] = config.allowedOrigin;
+  if (origin && config.allowedOrigins.includes(origin)) {
+    base["Access-Control-Allow-Origin"] = origin;
   }
   return base;
 }
@@ -231,7 +231,11 @@ console.log(`[agent] repo root   ${config.repoRoot}`);
 console.log(`[agent] tc sandbox  ${config.tcHome}/.tinycloud (profile: ${config.profileName})`);
 console.log(`[agent] state dir   ${config.agentStateDir}`);
 console.log(
-  `[agent] CORS origin ${config.allowedOrigin ?? "(none — set AGENT_ALLOWED_ORIGIN for a browser front end)"}`,
+  `[agent] CORS origin ${
+    config.allowedOrigins.length > 0
+      ? config.allowedOrigins.join(", ")
+      : "(none — set AGENT_ALLOWED_ORIGIN for a browser front end)"
+  }`,
 );
 // NEVER print the token itself (a secret in stdout leaks). Point the operator at
 // the persisted file instead; the front end gets the token from there.

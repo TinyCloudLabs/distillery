@@ -43,11 +43,12 @@ token is **never printed to the log** — read it with `cat <AGENT_STATE_DIR>/ap
 
 ### CORS
 
-CORS is locked to a single trusted browser origin via `AGENT_ALLOWED_ORIGIN`
-(e.g. `https://feed.example.com`) — **never** the `*` wildcard. The server
-reflects `Access-Control-Allow-Origin` only when the request `Origin` exactly
-matches. When `AGENT_ALLOWED_ORIGIN` is unset, no cross-origin request is
-reflected (same-origin / curl only).
+CORS is locked to a set of trusted browser origins via `AGENT_ALLOWED_ORIGIN`
+(comma-separated, e.g. `https://feed.example.com,https://feed.example.xyz`) —
+**never** the `*` wildcard. The server exact-matches the request `Origin`
+against the set and reflects only the matched origin in
+`Access-Control-Allow-Origin`. When `AGENT_ALLOWED_ORIGIN` is unset/empty, no
+cross-origin request is reflected (same-origin / curl only).
 
 ### Delegation validation
 
@@ -75,7 +76,7 @@ Env (all optional):
 | `AGENT_PORT` | `4097` | listen port |
 | `AGENT_HOST_BIND` | `127.0.0.1` | bind address (loopback; a tunnel/front end connects via localhost) |
 | `AGENT_API_TOKEN` | (generated + persisted) | per-install bearer token required on POST delegation/run; auto-generated + persisted (never logged) if unset |
-| `AGENT_ALLOWED_ORIGIN` | (none) | the single trusted CORS origin; no wildcard, no reflection when unset |
+| `AGENT_ALLOWED_ORIGIN` | (none) | trusted CORS origin(s), comma-separated; no wildcard, no reflection when unset |
 | `AGENT_CHAIN_ID` | `1` | EVM chain the delegation must target |
 | `AGENT_MAX_DELEGATION_BYTES` | `262144` | size cap on the serialized delegation payload |
 | `TINYCLOUD_HOST` | `https://node.tinycloud.xyz` | node the agent signs into + the delegation targets |

@@ -165,9 +165,14 @@ export const config = {
   /** Loopback by default (a tunnel/front end connects via localhost). */
   hostname: process.env.AGENT_HOST_BIND ?? "127.0.0.1",
   name: process.env.AGENT_NAME ?? "Distillery Agent",
-  /** The single trusted browser origin allowed by CORS (no wildcard). When
-   *  unset, NO cross-origin request is reflected (same-origin / curl only). */
-  allowedOrigin: process.env.AGENT_ALLOWED_ORIGIN?.trim() || null,
+  /** The trusted browser origins allowed by CORS (no wildcard) — a comma-
+   *  separated AGENT_ALLOWED_ORIGIN parsed into an exact-match set (each entry
+   *  trimmed, blanks dropped). When unset/empty, NO cross-origin request is
+   *  reflected (same-origin / curl only). */
+  allowedOrigins: (process.env.AGENT_ALLOWED_ORIGIN ?? "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0),
   /** Per-install API bearer token. If set via env it wins; otherwise the
    *  server generates one on first boot, persists it (0600), and logs it once. */
   apiToken: process.env.AGENT_API_TOKEN?.trim() || null,
