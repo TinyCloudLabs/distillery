@@ -26,6 +26,7 @@ import {
   validateArtifact,
   slugify,
   type Artifact,
+  type ApprovalStatus,
 } from "../../_shared/lib/artifact.ts";
 import { renderTypeFor, type RenderType } from "../../_shared/lib/formats.ts";
 import {
@@ -36,6 +37,12 @@ import {
 
 const FEED_DB = "xyz.tinycloud.artifacts/feed";
 const MEDIA_PREFIX = "xyz.tinycloud.artifacts/media";
+
+// §9 override: V1 is feed-only with no human approval gate, and §1.1 says the
+// feed holds ONLY approved rows (the viewer reads approved). Everything that
+// reaches publish is written approved — this supersedes a generation skill's
+// outward=pending default. Applied to both the column and the raw_artifact blob.
+const PUBLISHED_APPROVAL_STATUS: ApprovalStatus = "approved";
 
 /** Map a media file extension to its MIME type for the SQL pointer. */
 const MIME_BY_EXT: Record<string, string> = {
@@ -179,6 +186,15 @@ export async function publishArtifact(
   const target: SqlTarget = { db: FEED_DB, space: opts.space };
   const nowIso = new Date().toISOString();
 
+  // §9 override: V1 is feed-only with no human gate — everything published lands
+  // approved. Apply it to BOTH the typed column (what the viewer reads, §1.1)
+  // AND the embedded raw_artifact blob so the two can't disagree (a generation
+  // skill's outward=pending default is superseded at publish time).
+  const publishedArtifact: Artifact = {
+    ...artifact,
+    approval_status: PUBLISHED_APPROVAL_STATUS,
+  };
+
   const params = [
     artifact.id,
     artifact.type,
@@ -198,12 +214,12 @@ export async function publishArtifact(
     audio?.mime ?? null,
     null, // video_url — V1 defers video
     artifact.audience ?? null,
-    "approved", // §9.1: feed-only V1, written explicitly (no DEFAULT, no gate)
+    PUBLISHED_APPROVAL_STATUS, // §9.1: feed-only V1, no DEFAULT, no gate
     artifact.platform ?? null,
     artifact.generation_model ?? null,
     artifact.quality.critic_pass ? 1 : 0,
     artifact.quality.quotes_verified ? 1 : 0,
-    JSON.stringify(artifact),
+    JSON.stringify(publishedArtifact),
     artifact.generated_at,
     nowIso,
     opts.publisherDid,
