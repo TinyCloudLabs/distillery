@@ -82,3 +82,24 @@ describe("artifact schema — §1 DDL", () => {
     }
   });
 });
+
+describe("listenReadCaps — §3.3 grant #1 spec", () => {
+  const OWNER = "tinycloud:pkh:eip155:1:0xOWNER:applications";
+  test("emits SQL conversations:read + KV transcript prefix get,list,metadata", async () => {
+    const { listenReadCaps } = await import(
+      "../skills/tc-listen-read/scripts/listen-read-lib.ts"
+    );
+    const caps = listenReadCaps(OWNER);
+    expect(caps).toEqual([
+      `tinycloud.sql:${OWNER}:xyz.tinycloud.listen/conversations:read`,
+      `tinycloud.kv:${OWNER}:xyz.tinycloud.listen/:get,list,metadata`,
+    ]);
+  });
+  test("KV prefix cap keeps the load-bearing trailing slash", async () => {
+    const { listenReadCaps } = await import(
+      "../skills/tc-listen-read/scripts/listen-read-lib.ts"
+    );
+    const kvCap = listenReadCaps(OWNER)[1]!;
+    expect(kvCap).toContain("xyz.tinycloud.listen/:");
+  });
+});

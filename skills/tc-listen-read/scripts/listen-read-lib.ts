@@ -18,11 +18,34 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { sqlQuery, tcJson, type TcRunOptions } from "../../_shared/lib/tc.ts";
+import {
+  sqlQuery,
+  tcJson,
+  type TcRunOptions,
+} from "../../_shared/lib/tc.ts";
 import { slugify } from "../../_shared/lib/artifact.ts";
 
 const LISTEN_CONVERSATIONS_DB = "xyz.tinycloud.listen/conversations";
 const TRANSCRIPT_PREFIX = "xyz.tinycloud.listen/transcript";
+
+// The two caps the Listen reader needs (§3.3 grant #1). SQL actions are
+// `read`; KV actions are `get,list,metadata` (NOT read); KV prefix caps need a
+// TRAILING SLASH. These are the exact specs the owner grants.
+export const LISTEN_SQL_PATH = "xyz.tinycloud.listen/conversations";
+export const LISTEN_KV_PREFIX = "xyz.tinycloud.listen/"; // trailing slash load-bearing
+
+/**
+ * Build the two cap specs Listen-read needs, scoped to the Listen owner's
+ * space. `ownerSpace` is the owner's applications space — a bare name resolves
+ * to YOUR space, so for a cross-identity request pass the owner's full URI
+ * (tinycloud:pkh:eip155:1:<owner-addr>:applications).
+ */
+export function listenReadCaps(ownerSpace: string): string[] {
+  return [
+    `tinycloud.sql:${ownerSpace}:${LISTEN_SQL_PATH}:read`,
+    `tinycloud.kv:${ownerSpace}:${LISTEN_KV_PREFIX}:get,list,metadata`,
+  ];
+}
 
 export interface ListenTarget {
   /** --space name or URI of the Listen OWNER's applications space. */
@@ -174,4 +197,44 @@ export async function dumpCorpus(
     });
   }
   return written;
+}
+
+// ---------------------------------------------------------------------------
+// Delegate-asks-owner request emission (§3.4). Makes the OpenKey owner's grant
+// a single command: the agent emits ONE request artifact carrying BOTH caps
+// (--cap is repeatable), the owner runs ONE `tc auth grant`, the agent runs
+// ONE `tc auth import` + `tc auth retry`. No server poll — the file is the
+// hand-off medium.
+// ---------------------------------------------------------------------------
+
+export interface EmittedListenRequest {
+  /** Absolute/given path of the emitted request artifact. */
+  file: string;
+  /** The two cap specs the request carries. */
+  caps: string[];
+  /** requestId from the emitted artifact (for `tc auth retry <id>`). */
+  requestId?: string;
+}
+
+/**
+ * Emit a single `tinycloud.auth.request` artifact requesting BOTH Listen-read
+ * caps, scoped to the owner's space, to `file`. The owner grants it in their
+ * (browser) session; the agent then imports + retries. Throws TcCliError if tc
+ * rejects the request build (never on a network call — `auth request` without
+ * `--grant` does not contact the node).
+ */
+export async function emitListenReadRequest(
+  ownerSpace: string,
+  file: string,
+  opts: TcRunOptions = {},
+): Promise<EmittedListenRequest> {
+  const caps = listenReadCaps(ownerSpace);
+  const argv = ["auth", "request"];
+  for (const cap of caps) argv.push("--cap", cap);
+  argv.push("--emit", file);
+  const res = await tcJson<{ emitted?: boolean; requestId?: string }>(
+    argv,
+    opts,
+  );
+  return { file, caps, requestId: res.requestId };
 }

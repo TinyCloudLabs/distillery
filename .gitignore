@@ -40,3 +40,11 @@ out/
 drafts/
 artifacts-v2/
 .claude/
+
+# tc delegation/host hand-off artifacts (runtime, identity-bearing) + Listen corpus
+listen-read-request.json
+listen-read-grant.json
+host-request.json
+delegation-request.json
+delegation-grant.json
+/corpus/

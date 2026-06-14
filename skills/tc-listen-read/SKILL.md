@@ -39,6 +39,24 @@ space owned by a **different** identity, pass the owner's space URI
 (`tinycloud:pkh:eip155:1:<owner-addr>:applications`) and hold a delegation for
 it. Writes one markdown file per non-empty transcript and lists what it wrote.
 
+### Emit the delegation request the owner grants (one command)
+
+When the Listen owner is a different identity (e.g. the OpenKey `default`
+profile that owns the canonical Listen data), emit the exact request artifact —
+**one file carrying BOTH caps** (`--cap` is repeatable) — so the owner's grant
+is a single command:
+
+```sh
+bun skills/tc-listen-read/scripts/listen-read.ts \
+  --emit-request ./listen-read-request.json \
+  --owner-space tinycloud:pkh:eip155:1:<owner-addr>:applications
+```
+
+This prints the owner-grant + import + retry handshake. A normal `--out` read
+that 401s **auto-emits the same request** when `--owner-space` is passed — so
+the moment the owner runs their (browser) grant, the agent ingests immediately
+by re-running the read.
+
 ## Access remediation (§3.4 — no fabricated data)
 
 Branch on the structured `error.code`:
@@ -49,15 +67,16 @@ Branch on the structured `error.code`:
     tc auth request --cap "<cap from error.hint>" --grant --yes
     ```
   - **You are a delegate** — the file hand-off handshake (the run BLOCKS here;
-    durable Smithers state parks it until access lands, then re-run):
+    durable Smithers state parks it until access lands, then re-run). The skill
+    auto-emits step 1's request when `--owner-space` is known:
     ```sh
-    # 1. agent:
-    tc auth request --cap "<cap from hint>" --emit ./listen-read-request.json
-    # 2. owner (send them the file):
+    # 1. agent (or auto-emitted on a 401 with --owner-space):
+    bun skills/tc-listen-read/scripts/listen-read.ts --emit-request ./listen-read-request.json --owner-space <owner-space-uri>
+    # 2. owner (send them the file; OpenKey owners do this in a browser):
     tc auth grant ./listen-read-request.json --yes > ./listen-read-grant.json
     # 3. agent:
     tc auth import ./listen-read-grant.json
-    # 4. agent: wait for "covered": true, then re-run:
+    # 4. agent: wait for "covered": true, then re-run the read:
     tc auth retry --last
     ```
 - **`SPACE_NOT_HOSTED`** — the Listen space is not hosted. Only its owner can
