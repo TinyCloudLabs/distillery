@@ -19,7 +19,11 @@ import { config } from "./config.ts";
 import { ensureAgentKey } from "./agent-key.ts";
 import { loadNodeSdk } from "./node-sdk.ts";
 import { extractRestorable, writeDelegatedProfile } from "./profile-writer.ts";
-import { validateDelegation, type CapabilityHelpers } from "./delegation-validator.ts";
+import {
+  validateDelegationPreActivation,
+  validateRestorableSpace,
+  type CapabilityHelpers,
+} from "./delegation-validator.ts";
 import { mkdirSecure, writeJsonSecure } from "./fs-secure.ts";
 import { PERMISSIONS } from "./permissions.ts";
 
@@ -45,7 +49,9 @@ export class AgentSession {
   private constructor(node: TinyCloudNode, agentAddress: string) {
     this.node = node;
     this.agentAddress = agentAddress;
-    this.agentDid = `did:pkh:eip155:1:${agentAddress}`;
+    // Derive the DID's chain from config.chainId so a non-mainnet deployment
+    // advertises (and validates against) the right chain — never hardcode 1.
+    this.agentDid = `did:pkh:eip155:${config.chainId}:${agentAddress}`;
   }
 
   /** Boot the agent: ensure the key, sign the node in, restore a persisted delegation. */
@@ -120,19 +126,22 @@ export class AgentSession {
     const delegation = this.deserialize(serialized);
 
     // useDelegation (wallet mode) does NOT verify the audience or scopes, so we
-    // mint the session, then validate the delegation + the minted session TOGETHER
-    // (audience, chainId, expiry, space agreement, no scope escalation) BEFORE we
-    // project it into the sandbox profile or persist it. Any failure throws (400).
-    const access: DelegatedAccess = await this.node.useDelegation(delegation);
-    const restorable = extractRestorable(access);
-
-    validateDelegation(delegation, {
+    // must NOT activate an unvalidated delegation. PRE-validate everything we can
+    // from the delegation alone (chainId, expiry, audience===agent, no scope
+    // escalation, well-formed space) BEFORE minting the session. Any failure
+    // throws (400) and useDelegation is never reached.
+    validateDelegationPreActivation(delegation, {
       agentDid: this.agentDid,
       expectedChainId: config.chainId,
       permissions: PERMISSIONS,
-      restorable,
       helpers: this.helpers,
     });
+
+    // Only now mint the session, then confirm it targets the claimed space
+    // (the one check that needs the minted session), still BEFORE persisting.
+    const access: DelegatedAccess = await this.node.useDelegation(delegation);
+    const restorable = extractRestorable(access);
+    validateRestorableSpace(delegation, restorable);
 
     writeDelegatedProfile({
       home: config.tcHome,

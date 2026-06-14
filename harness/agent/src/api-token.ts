@@ -8,13 +8,14 @@
 // secret); otherwise we generate + persist a random one on first boot.
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { chmodFileSecure, writeFileSecure } from "./fs-secure.ts";
 
 /**
  * Resolve the API token: env override, else the persisted file, else a freshly
- * generated one (written 0600). Returns the token and whether it was freshly
- * generated (for a one-time log banner).
+ * generated one. The file is always (re-)secured to 0600 — written atomically
+ * when fresh, and a pre-existing file's mode is repaired when reused.
+ * Returns the token and whether it was freshly generated (for a one-time banner).
  */
 export function ensureApiToken(
   path: string,
@@ -24,12 +25,14 @@ export function ensureApiToken(
 
   if (existsSync(path)) {
     const persisted = readFileSync(path, "utf-8").trim();
-    if (persisted.length > 0) return { token: persisted, generated: false };
+    if (persisted.length > 0) {
+      chmodFileSecure(path); // repair a looser pre-existing mode
+      return { token: persisted, generated: false };
+    }
   }
 
   const fresh = randomBytes(32).toString("base64url");
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, fresh + "\n", { mode: 0o600 });
+  writeFileSecure(path, fresh + "\n"); // atomic 0600 in a 0700 dir
   return { token: fresh, generated: true };
 }
 

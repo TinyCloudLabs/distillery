@@ -68,20 +68,25 @@ type EnvMode = "sandbox" | "generate";
  *    the skill shells out to reads the SANDBOX delegated profile. Used for the
  *    tc-backed stages (listen-read, publish): they run as the delegator.
  *  - "generate" — the headless `claude -p` step over UNTRUSTED transcript text.
- *    Runs with a SCRUBBED env (buildGenerateEnv): an allowlist that drops every
- *    secret-bearing var (no TC_/AWS_/DB creds, no agent secrets) and removes the
- *    dirs carrying a `tc` binary from PATH. "Don't run tc" is only prompt text;
- *    the scrubbed env is the actual guardrail against env-secret exfiltration +
- *    casual `tc` invocation.
+ *    Two layers of mitigation (prompt text alone is NOT a guardrail):
+ *      a. SCRUBBED env (buildGenerateEnv): an allowlist that drops every
+ *         secret-bearing var (no TC_/AWS_/DB creds, no agent secrets) — so an
+ *         injection can't exfiltrate them from the environment.
+ *      b. TOOL RESTRICTION (buildGenerationArgs): claude runs with
+ *         --allowedTools scoped to file ops + `Bash(bun:*)`/`Bash(rm:*)` only
+ *         (no unrestricted Bash → no `tc`, `curl`, `cat ~/.tinycloud`),
+ *         --disallowedTools `Bash(tc:*)`, and --no-session-persistence (the
+ *         untrusted transcript never lands in ~/.claude history).
  *
  *    HOME stays the REAL home here (NOT a minimal sandbox). claude's login token
  *    lives in the macOS Keychain, and keychain access is bound to the real $HOME
  *    + per-user session vars — a minimal HOME makes `claude -p` report "Not
  *    logged in" (verified empirically). So this stage does NOT isolate the
- *    filesystem: a transcript-injected read could still reach ~/.tinycloud on
- *    disk. That filesystem isolation (separate HOME, or re-auth'd creds, or full
- *    process/container isolation) is the phase-2 (Phala/TEE) hardening. The env
- *    scrub is the MVP win we CAN land without breaking claude auth.
+ *    filesystem: a transcript-injected read via an allowed file tool could still
+ *    reach ~/.tinycloud on disk. Full process/filesystem isolation (separate
+ *    HOME with re-auth'd creds, or a container/TEE) is the phase-2 (Phala/TEE)
+ *    hardening. The env scrub + tool restriction are the MVP wins we CAN land
+ *    without breaking claude auth or the skill scripts.
  */
 function run(cmd: string, args: string[], mode: EnvMode = "sandbox"): Promise<SpawnResult> {
   const env =
@@ -105,19 +110,22 @@ function run(cmd: string, args: string[], mode: EnvMode = "sandbox"): Promise<Sp
 
 // ── GENERATE-STAGE SANDBOX (scrub the env claude -p inherits) ───────────────
 // The generate child reads untrusted Listen transcripts; a prompt-injected
-// transcript shouldn't be able to exfiltrate env secrets or casually shell out
-// to `tc`. buildGenerateEnv gives it ONLY what `claude -p` (+ the optional
-// Gemini hero) genuinely needs, and strips `tc` from PATH. (Filesystem reads of
-// ~/.tinycloud are NOT blocked here — see the run() doc above; that's phase 2.)
+// transcript shouldn't be able to exfiltrate env secrets or casually shell out.
+// buildGenerateEnv gives it ONLY what `claude -p` + the skill scripts (run via
+// `bun`) + the optional Gemini hero genuinely need. NOTE: `bun` and `tc` live in
+// the SAME dir (~/.bun/bin), so PATH can't drop `tc` without losing `bun`; the
+// real `tc`/arbitrary-Bash guardrail is the claude --allowedTools/--disallowedTools
+// restriction in buildGenerationArgs (no unrestricted Bash). Filesystem reads of
+// ~/.tinycloud are NOT blocked here — see the run() doc above; that's phase 2.
 
-/** PATH for the generate child: claude + node, EXCLUDING the dirs that carry a
- *  `tc` binary (~/.bun/bin, the nvm node bin). claude is a native binary in
- *  /opt/homebrew/bin and finds node there too. Overridable via
+/** PATH for the generate child: claude/node (/opt/homebrew/bin) + bun
+ *  (~/.bun/bin, required to run the skill scripts). Overridable via
  *  AGENT_GENERATE_PATH for non-Homebrew layouts. */
 function generatePath(): string {
   const override = process.env.AGENT_GENERATE_PATH?.trim();
   if (override) return override;
-  return ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
+  const home = process.env.HOME ?? "";
+  return [`${home}/.bun/bin`, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"].join(":");
 }
 
 /**
@@ -323,7 +331,57 @@ function buildGenerationArgs(
     `and one article, save the survivors under ${artifactsDir} (do NOT publish), ` +
     `then print a one-line summary.`;
 
-  return ["-p", user, "--system-prompt", system, "--model", config.genModel];
+  // TOOL POSTURE (defense-in-depth — see the run() "generate" doc for the honest
+  // threat model). In headless `claude -p`, --allowedTools does NOT make Bash
+  // exclusive (general Bash runs by default), so two levers do the real work:
+  //  - --allowedTools: AUTO-APPROVES exactly the workflow tools (file ops +
+  //    `Bash(bun:*)` to run skill scripts + `Bash(rm:*)` for the critic's
+  //    artifact deletes) so headless runs don't hang waiting on approval.
+  //  - --disallowedTools: HARD-BLOCKS the concrete escape/exfil vectors an
+  //    injection would reach for — `tc` (the delegated CLI), network tools
+  //    (curl/wget/nc/ssh/scp), keychain/env readers (security/env/printenv), and
+  //    claude's own WebFetch/WebSearch. Verified to deny these in -p mode.
+  //  CAVEAT: `bun` is required AND turing-complete, so `bun -e <js>` is a residual
+  //  exfil path — this denylist raises the bar against casual/direct injection but
+  //  is NOT a sandbox. True isolation = phase-2 TEE.
+  //  --no-session-persistence keeps the untrusted transcript out of ~/.claude
+  //  history; --add-dir scopes file tools to corpus+artifacts (+repo for SKILLs).
+  const allowedTools = ["Read", "Write", "Edit", "Glob", "Grep", "Bash(bun:*)", "Bash(rm:*)"].join(
+    " ",
+  );
+  const disallowedTools = [
+    "Bash(tc:*)",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    "Bash(nc:*)",
+    "Bash(ssh:*)",
+    "Bash(scp:*)",
+    "Bash(security:*)",
+    "Bash(env:*)",
+    "Bash(printenv:*)",
+    "WebFetch",
+    "WebSearch",
+  ].join(" ");
+
+  return [
+    "-p",
+    user,
+    "--system-prompt",
+    system,
+    "--model",
+    config.genModel,
+    "--allowedTools",
+    allowedTools,
+    "--disallowedTools",
+    disallowedTools,
+    "--no-session-persistence",
+    "--add-dir",
+    config.repoRoot,
+    "--add-dir",
+    corpusDir,
+    "--add-dir",
+    artifactsDir,
+  ];
 }
 
 /** Markdown corpus files listen-read wrote (absolute paths). Empty if none. */

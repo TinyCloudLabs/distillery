@@ -22,18 +22,23 @@ export function mkdirSecure(dir: string): void {
 }
 
 /**
- * Write `body` (JSON-serialized, pretty) to `path` atomically with mode 0600.
- * The parent dir is ensured 0700. The temp file is created 0600 from the start
- * (never a 0644 window), and rename is atomic within the same dir.
+ * Write raw `contents` to `path` atomically with mode 0600. The parent dir is
+ * ensured 0700. The temp file is created 0600 from the start (never a 0644
+ * window), and rename is atomic within the same dir.
  */
-export function writeJsonSecure(path: string, body: unknown): void {
+export function writeFileSecure(path: string, contents: string): void {
   mkdirSecure(dirname(path));
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(tmp, JSON.stringify(body, null, 2) + "\n", { mode: 0o600 });
+  writeFileSync(tmp, contents, { mode: 0o600 });
   // writeFileSync's `mode` only applies on create; if a stale tmp existed it
   // keeps its old mode — force 0600 before the rename to be safe.
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
+}
+
+/** Write `body` (JSON-serialized, pretty) to `path` atomically with mode 0600. */
+export function writeJsonSecure(path: string, body: unknown): void {
+  writeFileSecure(path, JSON.stringify(body, null, 2) + "\n");
 }
 
 /** chmod an existing file to 0600 if it is looser. No-op when absent. */

@@ -35,10 +35,11 @@ x-agent-token:  <token>            # equivalent alternative
 ```
 
 The token comes from `AGENT_API_TOKEN` if set; otherwise the server **generates
-one on first boot, persists it `0600` at `<AGENT_STATE_DIR>/api-token`, and
-prints it once** in the startup banner. The front end reads it from there and
-sends it on every `delegation`/`run` call. A missing/invalid token → `401`.
-`GET /agent/info` and `GET /agent/run/:id` stay public.
+one on first boot and persists it `0600` at `<AGENT_STATE_DIR>/api-token`**. The
+token is **never printed to the log** — read it with `cat <AGENT_STATE_DIR>/api-token`
+(the startup banner points you there). The front end sends it on every
+`delegation`/`run` call. A missing/invalid token → `401`. `GET /agent/info` and
+`GET /agent/run/:id` stay public.
 
 ### CORS
 
@@ -50,13 +51,16 @@ reflected (same-origin / curl only).
 
 ### Delegation validation
 
-`POST /agent/delegation` validates the incoming delegation BEFORE activating or
-persisting it (`400` on any failure): numeric `chainId` == the agent's chain,
-expiry in the future, well-formed pkh `spaceId`, the activated session's space
-agrees with the delegation, the audience DID == THIS agent's `did:pkh` (no
-foreign audience), and the granted `resources[]` are a SUBSET of the advertised
-`permissions` (no scope escalation). A serialized payload over
-`AGENT_MAX_DELEGATION_BYTES` is rejected before parsing.
+`POST /agent/delegation` validates in two phases so an unvalidated grant is
+**never activated**. PRE-activation (before `useDelegation`, `400` on failure):
+size cap (`AGENT_MAX_DELEGATION_BYTES`, before parse), numeric `chainId` == the
+agent's chain, expiry in the future, well-formed pkh `spaceId`, audience DID ==
+THIS agent's `did:pkh` (no foreign audience), and the granted `resources[]` are a
+SUBSET of the advertised `permissions` (no scope escalation; each resource must
+target THIS delegation's space — a full pkh URI must match EXACTLY, so a
+different owner's same-named space is rejected). POST-activation: the minted
+session's space must equal the delegation's. The agent's `did:pkh` chain is
+derived from `AGENT_CHAIN_ID`.
 
 ## Run
 
@@ -70,7 +74,7 @@ Env (all optional):
 |---|---|---|
 | `AGENT_PORT` | `4097` | listen port |
 | `AGENT_HOST_BIND` | `127.0.0.1` | bind address (loopback; a tunnel/front end connects via localhost) |
-| `AGENT_API_TOKEN` | (generated + persisted) | per-install bearer token required on POST delegation/run; auto-generated + logged once if unset |
+| `AGENT_API_TOKEN` | (generated + persisted) | per-install bearer token required on POST delegation/run; auto-generated + persisted (never logged) if unset |
 | `AGENT_ALLOWED_ORIGIN` | (none) | the single trusted CORS origin; no wildcard, no reflection when unset |
 | `AGENT_CHAIN_ID` | `1` | EVM chain the delegation must target |
 | `AGENT_MAX_DELEGATION_BYTES` | `262144` | size cap on the serialized delegation payload |
@@ -80,7 +84,7 @@ Env (all optional):
 | `AGENT_NAME` | `Distillery Agent` | advertised in `/agent/info` |
 | `AGENT_TRANSCRIPT_COUNT` | `5` | Listen transcripts pulled per run |
 | `AGENT_GEN_MODEL` | `opus` | model for the headless `claude -p` generate step |
-| `AGENT_GENERATE_PATH` | `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` | PATH for the generate child (excludes dirs carrying `tc`) |
+| `AGENT_GENERATE_PATH` | `~/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` | PATH for the scrubbed-env generate child (needs `bun` + `claude`) |
 | `NODE_SDK_DIST` | (built js-sdk checkout) | override the `@tinycloud/node-sdk` dist path |
 
 The generate step spawns `claude -p`, so `claude` must be on PATH (and logged
@@ -107,15 +111,19 @@ env). The tc CLI's config dir is `os.homedir()/.tinycloud` with no env override
    space** — never an owner/cli-test key (hard rule). The user's real
    `~/.tinycloud` is never touched.
 3. The **generate** stage (`claude -p`) runs over UNTRUSTED transcript text, so
-   it gets a **scrubbed env**: an allowlist (claude/Gemini creds + the macOS
-   keychain-session vars claude needs to find its login token) with every
-   secret-bearing var dropped and `tc` removed from `PATH`. It writes artifact
-   files locally and touches no `tc` / no delegation. `$HOME` stays the **real**
-   home here — claude's login token lives in the macOS Keychain and keychain
-   access is bound to the real `$HOME`, so a minimal HOME makes `claude -p`
-   report "Not logged in". Consequence: this stage scrubs the env but does NOT
-   isolate the filesystem (a prompt-injected transcript could still read
-   `~/.tinycloud` on disk). Full process/filesystem isolation is the **phase-2
+   it gets two layers of defense-in-depth: (a) a **scrubbed env** — an allowlist
+   (claude/Gemini creds + the macOS keychain-session vars claude needs) with every
+   secret-bearing var dropped; and (b) a **claude tool restriction** —
+   `--allowedTools` auto-approves only file ops + `Bash(bun:*)`/`Bash(rm:*)` (the
+   skill scripts + critic deletes), `--disallowedTools` hard-blocks `tc` + network
+   tools (curl/wget/nc/ssh/scp) + keychain/env readers (security/env/printenv) +
+   WebFetch/WebSearch, and `--no-session-persistence` keeps the untrusted
+   transcript out of `~/.claude` history. `$HOME` stays the **real** home —
+   claude's login token lives in the macOS Keychain, bound to the real `$HOME`, so
+   a minimal HOME makes `claude -p` report "Not logged in". **Caveat:** `bun` is
+   required and turing-complete (`bun -e <js>`), so the tool denylist raises the
+   bar but is NOT a sandbox — a prompt-injected read could still reach
+   `~/.tinycloud` on disk. Full process/filesystem isolation is the **phase-2
    (Phala/TEE)** hardening. The other stages get the sandbox HOME.
 
 ## The pipeline (`POST /agent/run`)

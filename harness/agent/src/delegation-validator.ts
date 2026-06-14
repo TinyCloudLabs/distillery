@@ -1,19 +1,24 @@
 // delegation-validator.ts — gate an incoming PortableDelegation BEFORE the agent
 // activates it (node.useDelegation) or persists it to disk. useDelegation in
 // wallet mode does NOT check the audience or scopes itself, so a forged/over-
-// broad delegation would otherwise be accepted silently and run under. This is
-// the agent's trust boundary: every check here must pass or we throw (the server
-// maps the throw to HTTP 400 with the message).
+// broad delegation would otherwise be ACTIVATED before we could reject it. This
+// is the agent's trust boundary: every check here must pass or we throw (the
+// server maps the throw to HTTP 400 with the message).
 //
-// Checks (all must hold):
-//   1. chainId is the agent's expected numeric chain.
-//   2. expiry is a real future Date.
-//   3. spaceId is a well-formed tinycloud:pkh space URI.
-//   4. restorable.spaceId === delegation.spaceId (the activated session targets
-//      the same space the delegation claims).
-//   5. the delegate/audience DID === THIS agent's did:pkh (no foreign audience).
-//   6. the delegation's granted resources are a SUBSET of the agent's advertised
-//      PERMISSIONS (no scope escalation beyond what /agent/info promised).
+// Split into two phases so we NEVER call useDelegation on an unvalidated grant:
+//
+//   validateDelegationPreActivation(delegation, ctx)  — runs BEFORE useDelegation
+//     1. chainId is the agent's expected numeric chain.
+//     2. expiry is a real future Date.
+//     3. spaceId is a well-formed tinycloud:pkh space URI.
+//     4. the delegate/audience DID === THIS agent's did:pkh (no foreign audience).
+//     5. the granted resources are a SUBSET of the advertised PERMISSIONS (no
+//        scope escalation), and each resource targets THIS delegation's space.
+//
+//   validateRestorableSpace(delegation, restorable)   — runs AFTER useDelegation
+//     6. restorable.spaceId === delegation.spaceId (the minted session targets
+//        the same space the delegation claims). This is the only check that
+//        needs the session, so it's the only thing deferred past useDelegation.
 //
 // The serialized-payload size cap is enforced in session.activate (before
 // deserialize), since it bounds the parse, not the parsed object.
@@ -33,7 +38,7 @@ export interface CapabilityHelpers {
   principalDidEquals: (a: string, b: string) => boolean;
 }
 
-/** What the validator compares the delegation against. */
+/** What the pre-activation validator compares the delegation against. */
 export interface ValidationContext {
   /** The agent's stable did:pkh (the only allowed audience). */
   agentDid: string;
@@ -41,8 +46,6 @@ export interface ValidationContext {
   expectedChainId: number;
   /** The agent's advertised scopes (the upper bound on what may be granted). */
   permissions: readonly PermissionEntry[];
-  /** The session minted by useDelegation — must agree on spaceId. */
-  restorable: RestorableSession;
   /** SDK capability helpers (injected — see CapabilityHelpers above). */
   helpers: CapabilityHelpers;
 }
@@ -60,20 +63,36 @@ const SERVICE_SHORT_TO_LONG: Readonly<Record<string, string>> = {
 /** A tinycloud:pkh:eip155:<chain>:<addr>:<name> space URI (the only shape we grant on). */
 const SPACE_URI_RE = /^tinycloud:pkh:eip155:\d+:0x[0-9a-fA-F]{40}:.+$/;
 
-/** Trailing space-name segment of a full space URI; short names pass through. */
-function spaceName(space: string): string {
-  if (!space.startsWith("tinycloud:")) return space;
-  const lastColon = space.lastIndexOf(":");
-  return lastColon === -1 || lastColon === space.length - 1
-    ? space
-    : space.slice(lastColon + 1);
+/**
+ * Does a resource's `space` field refer to the SAME space as the delegation?
+ *
+ * SECURITY: a resource's space must not merely share the trailing NAME segment
+ * — `tinycloud:...:OTHEROWNER:default` is a DIFFERENT owner's space than
+ * `tinycloud:...:OUROWNER:default`. So:
+ *  - if `resourceSpace` is a full pkh URI, require an EXACT match to the
+ *    delegation's (already-validated) full pkh `spaceId`;
+ *  - only when `resourceSpace` is a BARE short name (no `tinycloud:` prefix) do
+ *    we accept it by matching the delegation's trailing name segment.
+ */
+function resourceTargetsDelegationSpace(resourceSpace: string, delegationSpaceId: string): boolean {
+  if (resourceSpace.startsWith("tinycloud:")) {
+    return resourceSpace === delegationSpaceId; // exact full-URI match — no owner spoof
+  }
+  // bare short name: compare against the delegation space's trailing segment.
+  const lastColon = delegationSpaceId.lastIndexOf(":");
+  const delegationName =
+    lastColon === -1 || lastColon === delegationSpaceId.length - 1
+      ? delegationSpaceId
+      : delegationSpaceId.slice(lastColon + 1);
+  return resourceSpace === delegationName;
 }
 
 /**
- * Throw with a client-facing message on any failure; return normally when the
- * delegation is safe to activate + persist. The server treats a throw as 400.
+ * PRE-ACTIVATION checks: everything that can be decided from the delegation
+ * alone, run BEFORE node.useDelegation so a forged/over-scoped grant is rejected
+ * before it is ever activated. Throws (server → 400) on any failure.
  */
-export function validateDelegation(
+export function validateDelegationPreActivation(
   delegation: PortableDelegation,
   ctx: ValidationContext,
 ): void {
@@ -101,15 +120,7 @@ export function validateDelegation(
     throw new Error(`invalid delegation: malformed spaceId '${delegation.spaceId}'.`);
   }
 
-  // 4. restorable.spaceId agrees with the delegation's claimed space.
-  if (ctx.restorable.spaceId !== delegation.spaceId) {
-    throw new Error(
-      `invalid delegation: activated session space '${ctx.restorable.spaceId}' ` +
-        `!= delegation space '${delegation.spaceId}'.`,
-    );
-  }
-
-  // 5. audience — the delegate DID must be THIS agent's did:pkh.
+  // 4. audience — the delegate DID must be THIS agent's did:pkh.
   if (typeof delegation.delegateDID !== "string" || delegation.delegateDID.length === 0) {
     throw new Error("invalid delegation: missing delegateDID.");
   }
@@ -120,7 +131,7 @@ export function validateDelegation(
     );
   }
 
-  // 6. scope subset — the granted resources must not exceed the advertised
+  // 5. scope subset — the granted resources must not exceed the advertised
   //    PERMISSIONS. We need the full per-resource breakdown to know the service
   //    of each grant; a legacy single-resource delegation (no `resources[]`)
   //    can't be scope-checked, so we reject it (this agent always issues the
@@ -133,28 +144,26 @@ export function validateDelegation(
     );
   }
 
-  const grantSpace = spaceName(delegation.spaceId);
   const granted: PermissionEntry[] = resources.map((r) => {
     const longService = SERVICE_SHORT_TO_LONG[r.service];
     if (!longService) {
       throw new Error(`invalid delegation: unknown service '${r.service}' in a resource.`);
     }
-    // Every resource must target the delegation's own space — a resource on a
-    // different space is a malformed/escalating grant.
-    if (spaceName(r.space) !== grantSpace) {
+    // Every resource must target THIS delegation's space — a resource on any
+    // other space (incl. a different owner's same-named space) is escalating.
+    if (!resourceTargetsDelegationSpace(r.space, delegation.spaceId)) {
       throw new Error(
         `invalid delegation: resource space '${r.space}' != delegation space '${delegation.spaceId}'.`,
       );
     }
-    return { service: longService, space: grantSpace, path: r.path, actions: r.actions };
+    // Pin BOTH sides to the delegation's full spaceId so the subset check
+    // compares service/path/actions (space equality is already proven above).
+    return { service: longService, space: delegation.spaceId, path: r.path, actions: r.actions };
   });
 
-  // Normalize the advertised permissions to the same space so the subset check
-  // compares service/path/actions (not the space label, which we've already
-  // pinned to grantSpace on both sides).
   const allowed: PermissionEntry[] = ctx.permissions.map((p) => ({
     service: p.service,
-    space: grantSpace,
+    space: delegation.spaceId,
     path: p.path,
     actions: [...p.actions],
   }));
@@ -167,6 +176,23 @@ export function validateDelegation(
     throw new Error(
       `invalid delegation: granted scopes exceed the agent's advertised permissions ` +
         `(escalation): ${detail}.`,
+    );
+  }
+}
+
+/**
+ * POST-ACTIVATION check: the session minted by useDelegation must target the
+ * SAME space the delegation claimed. Runs after useDelegation (it's the only
+ * check that needs the restorable session). Throws (server → 400) on mismatch.
+ */
+export function validateRestorableSpace(
+  delegation: PortableDelegation,
+  restorable: RestorableSession,
+): void {
+  if (restorable.spaceId !== delegation.spaceId) {
+    throw new Error(
+      `invalid delegation: activated session space '${restorable.spaceId}' ` +
+        `!= delegation space '${delegation.spaceId}'.`,
     );
   }
 }

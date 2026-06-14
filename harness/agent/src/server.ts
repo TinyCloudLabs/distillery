@@ -25,10 +25,12 @@ import { ensureApiToken, tokenMatches } from "./api-token.ts";
 // ── AUTH + CORS ───────────────────────────────────────────────────────────
 // This is a credential-holding service: POST /agent/delegation and POST
 // /agent/run mutate state / publish under the active delegation, so they REQUIRE
-// the per-install bearer token. The front end reads the token from the server's
-// startup log (or sets AGENT_API_TOKEN) and sends it on every mutating call as:
+// the per-install bearer token. The operator reads the token from the persisted
+// file (`cat <AGENT_STATE_DIR>/api-token`) or sets AGENT_API_TOKEN; the front end
+// then sends it on every mutating call as:
 //     Authorization: Bearer <token>      (or:  x-agent-token: <token>)
-// GET /agent/info stays public (it returns only the DID + advertised perms).
+// The token is NEVER printed to the log (a secret in stdout leaks to anything
+// that captures the process output). GET /agent/info stays public (DID + perms).
 //
 // CORS is locked to a single trusted origin (AGENT_ALLOWED_ORIGIN) — NEVER the
 // `*` wildcard, which would let any web page drive this agent. When the env is
@@ -231,15 +233,16 @@ console.log(`[agent] state dir   ${config.agentStateDir}`);
 console.log(
   `[agent] CORS origin ${config.allowedOrigin ?? "(none — set AGENT_ALLOWED_ORIGIN for a browser front end)"}`,
 );
-// Log the per-install API token ONCE so the operator/front end can pick it up.
-// (When AGENT_API_TOKEN is set, it's already known — we only banner a generated one.)
+// NEVER print the token itself (a secret in stdout leaks). Point the operator at
+// the persisted file instead; the front end gets the token from there.
 if (tokenGenerated) {
   console.log("");
   console.log("==================================================================");
-  console.log(`  Agent API token (send as 'Authorization: Bearer <token>'):`);
-  console.log(`    ${apiToken}`);
-  console.log(`  Persisted at ${config.apiTokenPath} (0600). Required on`);
-  console.log(`  POST /agent/delegation and POST /agent/run.`);
+  console.log(`  Generated a per-install API token (required on POST`);
+  console.log(`  /agent/delegation and POST /agent/run). Read it with:`);
+  console.log(`    cat ${config.apiTokenPath}`);
+  console.log(`  (file mode 0600). Or set AGENT_API_TOKEN to pin your own.`);
+  console.log(`  Send it as: Authorization: Bearer <token>  (or x-agent-token).`);
   console.log("==================================================================");
   console.log("");
 } else {

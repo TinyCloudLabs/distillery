@@ -6,8 +6,8 @@
 // no legacy-path migration — this is a fresh local deployment).
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { chmodFileSecure, writeJsonSecure } from "./fs-secure.ts";
 
 export interface AgentKeyFile {
   privateKey: string;
@@ -37,10 +37,10 @@ export function ensureAgentKey(path: string): { key: AgentKeyFile; generated: bo
     if (!isValidKey(parsed)) {
       throw new Error(`Invalid agent key file at ${path}: missing or malformed privateKey`);
     }
+    chmodFileSecure(path); // repair a looser pre-existing mode
     return { key: parsed, generated: false };
   }
   const fresh: AgentKeyFile = { privateKey: generatePrivateKey() };
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(fresh, null, 2), { mode: 0o600 });
+  writeJsonSecure(path, fresh); // atomic 0600 in a 0700 dir
   return { key: fresh, generated: true };
 }
