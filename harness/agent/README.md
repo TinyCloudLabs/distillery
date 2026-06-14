@@ -17,7 +17,11 @@ GET  /agent/info             → { did, name, permissions: PermissionEntry[] }  
 POST /agent/delegation       { serialized } → { ok, agentDid, delegationCid, spaceId, expiresAt }   (AUTH)
 POST /agent/run              {} (uses the stored delegation) → { run_id, status:"queued" }           (AUTH)
 GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", published?:[{type,slug}], error? }
+GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?:[{type,slug}], error? }] }   (public)
 ```
+
+`GET /agent/runs` lists recent runs (newest first, capped at 25, no heavy `log`)
+so a client can detect an in-progress build.
 
 `permissions` advertises the scopes the user must delegate: Listen-read on
 `xyz.tinycloud.listen` (SQL `conversations` read + KV `transcript` get/list) and

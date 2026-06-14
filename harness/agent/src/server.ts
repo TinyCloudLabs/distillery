@@ -7,6 +7,7 @@
 //   POST /agent/delegation      { serialized } → { ok, agentDid, delegationCid, spaceId, expiresAt }
 //   POST /agent/run             {} → { run_id, status:"queued" }
 //   GET  /agent/run/:run_id     → { run_id, status, published?[], error? }
+//   GET  /agent/runs            → { runs: RunSummary[] }  (recent runs, light)
 //
 // Run from the distillery repo root:  bun harness/agent/src/server.ts
 //   AGENT_PORT (4097) AGENT_HOST_BIND (127.0.0.1) TINYCLOUD_HOST AGENT_STATE_DIR
@@ -18,7 +19,7 @@
 import { config } from "./config.ts";
 import { AgentSession, type ActiveDelegation } from "./session.ts";
 import { runPipeline, type RunState } from "./runner.ts";
-import { createRun, isValidRunId, readRun, writeRun } from "./runs.ts";
+import { createRun, isValidRunId, listRuns, readRun, writeRun } from "./runs.ts";
 import { PERMISSIONS } from "./permissions.ts";
 import { ensureApiToken, tokenMatches } from "./api-token.ts";
 
@@ -188,6 +189,12 @@ function handleGetRun(req: Request, runId: string): Response {
   });
 }
 
+/** List recent runs (light summaries) so a client can detect an in-progress
+ *  build. Public — same as GET /agent/info and GET /agent/run/:id. */
+function handleListRuns(req: Request): Response {
+  return json(req, 200, { runs: listRuns() });
+}
+
 /** 401 for a mutating request that lacks the valid per-install token. */
 function unauthorized(req: Request): Response {
   return json(req, 401, {
@@ -209,6 +216,9 @@ Bun.serve({
     }
     if (url.pathname === "/agent/info" && req.method === "GET") {
       return handleInfo(req); // public
+    }
+    if (url.pathname === "/agent/runs" && req.method === "GET") {
+      return handleListRuns(req); // public
     }
     if (url.pathname === "/agent/delegation" && req.method === "POST") {
       if (!isAuthorized(req)) return unauthorized(req);
