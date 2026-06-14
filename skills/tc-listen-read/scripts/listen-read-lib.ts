@@ -19,8 +19,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  kvList,
   sqlQuery,
   tcJson,
+  TcCliError,
   type TcRunOptions,
 } from "../../_shared/lib/tc.ts";
 import { slugify } from "../../_shared/lib/artifact.ts";
@@ -180,10 +182,36 @@ export async function dumpCorpus(
   opts: TcRunOptions = {},
 ): Promise<WrittenTranscript[]> {
   await mkdir(corpusDir, { recursive: true });
-  const conversations = await listConversations(count, target, opts);
+  // Only a subset of conversation rows have a stored transcript (different
+  // import batches: the newest rows can be transcript-less while older
+  // fireflies imports carry one). List the transcript KV keys up front and keep
+  // only conversations whose id has a transcript — recency-first — so we never
+  // blind-probe hundreds of transcript-less rows.
+  const keyList = await kvList(`${TRANSCRIPT_PREFIX}/`, { space: target.space }, opts);
+  const transcriptIds = new Set(
+    keyList.keys.map((k) => k.slice(`${TRANSCRIPT_PREFIX}/`.length)),
+  );
+  // Scan a generous window of recent conversations (well above the current
+  // table size) so the recency-first transcript-backed rows are all reachable
+  // even as the conversation table grows; the intersection below is what bounds
+  // the work, not this limit.
+  const CONVERSATION_SCAN_LIMIT = 10_000;
+  const conversations = (
+    await listConversations(CONVERSATION_SCAN_LIMIT, target, opts)
+  ).filter((meta) => transcriptIds.has(meta.id));
   const written: WrittenTranscript[] = [];
   for (const meta of conversations) {
-    const turns = await fetchTranscript(meta.id, target, opts);
+    if (written.length >= count) break;
+    let turns: TranscriptTurn[];
+    try {
+      turns = await fetchTranscript(meta.id, target, opts);
+    } catch (e) {
+      // A conversation whose transcript key vanished between list and get is
+      // the same "nothing to distill" case as an empty transcript — skip it.
+      // Any other tc error (auth, unhosted, malformed) still throws loudly.
+      if (e instanceof TcCliError && e.code === "NOT_FOUND") continue;
+      throw e;
+    }
     if (turns.length === 0) continue; // empty transcript — nothing to distill
     const md = renderTranscriptMarkdown(meta, turns);
     const fileName = `${slugify(meta.title)}-${meta.id.slice(0, 8)}.md`;
