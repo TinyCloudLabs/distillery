@@ -7,8 +7,8 @@ delegation** — publishing distilled artifacts to the **user's own**
 Listen-read + artifacts-read/write scopes to this agent's DID, then hits
 `/agent/run` to generate.
 
-MVP: runs locally (`bun`). Phala/TEE deploy is phase 2 (Listen's
-`agent-runtime` Docker is the deploy precedent).
+Runs locally (`bun`) for dev, and is **deployed live to a Phala CVM (TEE)** —
+see `DEPLOY.md` for the live coordinates and the deploy/redeploy runbook.
 
 ## API contract
 
