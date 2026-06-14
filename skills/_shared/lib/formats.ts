@@ -27,9 +27,23 @@ export const ARTIFACT_TYPES = [
 ] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
+/**
+ * The three render SHAPES the viewer draws. Decoupled from `type` (8 formats):
+ * adding a 9th format never touches the viewer; relayouting a card never
+ * touches the producer. tweet = short text (+ optional quote); article =
+ * headline + hero + body_md (+ optional audio); video = external embed.
+ * (V1 viewer ships tweet + article; video lands later with zero churn.)
+ */
+export type RenderType = "tweet" | "article" | "video";
+
 export interface FormatMeta {
   /** Human kicker label the feed UI shows. */
   label: string;
+  /**
+   * The viewer card shape this format publishes as (§4.2). One pure mapping:
+   * publish precomputes `render_type = renderTypeFor(type)`.
+   */
+  render: RenderType;
   /**
    * Outward-facing formats gate at a human-approval step before they can
    * ship; internal formats always publish. (person-brief is the straddler:
@@ -52,15 +66,24 @@ export interface FormatMeta {
 }
 
 export const FORMAT_REGISTRY = {
-  "insight-card": { label: "Insight", outward: false, miner: "extract-insights", explorable: true },
-  article: { label: "Article", outward: false, miner: "write-article", explorable: true },
-  podcast: { label: "Podcast", outward: false, miner: "make-podcast", explorable: true },
-  digest: { label: "Digest", outward: false, miner: "write-digest", explorable: true },
-  "social-post": { label: "Social post", outward: true, miner: "banger-extractor", explorable: false },
-  "investor-update-snippet": { label: "Investor snippet", outward: true, miner: "investor-snippet", explorable: false },
-  "quote-card": { label: "Quote card", outward: true, miner: "quote-card", explorable: false },
-  "person-brief": { label: "Person brief", outward: true, miner: null, explorable: false },
+  "insight-card": { label: "Insight", outward: false, miner: "extract-insights", explorable: true, render: "article" },
+  article: { label: "Article", outward: false, miner: "write-article", explorable: true, render: "article" },
+  podcast: { label: "Podcast", outward: false, miner: "make-podcast", explorable: true, render: "article" },
+  digest: { label: "Digest", outward: false, miner: "write-digest", explorable: true, render: "article" },
+  "social-post": { label: "Social post", outward: true, miner: "banger-extractor", explorable: false, render: "tweet" },
+  "investor-update-snippet": { label: "Investor snippet", outward: true, miner: "investor-snippet", explorable: false, render: "tweet" },
+  "quote-card": { label: "Quote card", outward: true, miner: "quote-card", explorable: false, render: "tweet" },
+  "person-brief": { label: "Person brief", outward: true, miner: null, explorable: false, render: "article" },
 } as const satisfies Record<ArtifactType, FormatMeta>;
+
+/**
+ * Publish-time pure mapping from a distillery `type` (8-value, canonical) to a
+ * viewer `render_type` (3-value). The ONLY place this mapping lives (§4.2);
+ * tc-publish precomputes it into the stored `render_type` column.
+ */
+export function renderTypeFor(type: ArtifactType): RenderType {
+  return FORMAT_REGISTRY[type].render;
+}
 
 /** Outward-facing types gate at a human-approval step before they can ship. */
 export const OUTWARD_ARTIFACT_TYPES: readonly ArtifactType[] = ARTIFACT_TYPES.filter(
