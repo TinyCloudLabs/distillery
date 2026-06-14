@@ -295,7 +295,7 @@ sequenceDiagram
     FE->>FE: tcw.delegateTo(agentDid, scopes, {expiry})  (no extra prompt — scopes in signed recap)
     FE->>FE: serializeDelegation()
     FE->>AG: POST /agent/delegation { serialized }   (Bearer token)
-    AG->>AG: 2-phase validate → node.useDelegation(...) → persist
+    AG->>AG: 2-phase validate, node.useDelegation(...), persist
     AG-->>FE: { agentDid, delegationCid, spaceId, expiresAt }
     FE->>FE: persist delegation in localStorage (bound to space + agent DID)
     U->>FE: click Generate
@@ -338,7 +338,7 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant L as Listen (xyz.tinycloud.listen)
-    participant SK as Agent generate (banger→tweet, write-article)
+    participant SK as Agent generate (banger-extractor, write-article)
     participant CR as Critic + verify-quotes
     participant PUB as tc-publish (delegated session key)
     participant ART as User's xyz.tinycloud.artifacts (SQL+KV)
@@ -347,7 +347,7 @@ sequenceDiagram
     Note over SK,ART: precondition — front end bootstrapped the feed table (owner session, on connect)
     SK->>L: tc sql query / kv list (under delegation §3)
     L-->>SK: transcript rows + KV transcript blobs
-    Note over SK: extract → triage → draft (headless claude -p, novelty candidate required)
+    Note over SK: extract, triage, draft (headless claude -p, novelty candidate required)
     SK->>CR: draft artifact.json
     CR->>CR: adversarial novelty critic (quality.critic_pass)
     CR->>L: verify-quotes (verbatim vs transcript)
@@ -356,7 +356,7 @@ sequenceDiagram
     PUB->>ART: KV put media (base64 string value)
     PUB->>ART: SQL INSERT feed row (approval_status='approved')
     FE->>ART: SQL SELECT recent artifacts (own session)
-    ART-->>FE: rows + media keys → render tweet/article card
+    ART-->>FE: rows + media keys, render tweet/article card
         </div>
         <figcaption>
           The quality loop (<em>extract → triage → draft → critic → verify-quotes</em>) is
@@ -617,7 +617,7 @@ sequenceDiagram
 
   const IDEAL = `flowchart TD
     USER["User (root authority)<br/>signed recap covers scopes"] -->|serialized delegation<br/>aud = agent DID| VAL["TEE: POST /agent/delegation<br/>2-phase validate:<br/>chain · expiry · audience==self<br/>· resources subset of permissions"]
-    KEY["TEE: stable agent key → did:pkh<br/>named volume"] --> VAL
+    KEY["TEE: stable agent key (did:pkh)<br/>named volume"] --> VAL
     CORS["CORS allowlist<br/>2 tinyfeed origins (exact)"] -->|guards| VAL
     VAL --> SAND["TEE: sandboxed tc profile<br/>HOME=sandbox · delegated session<br/>(no owner key on disk)"]
     SAND --> RUN["TEE: POST /agent/run<br/>scrubbed-env claude -p<br/>tool-restricted"]
