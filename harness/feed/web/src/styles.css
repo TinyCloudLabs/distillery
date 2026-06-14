@@ -47,13 +47,38 @@ button {
   outline-offset: 2px;
 }
 
+/* ---- brand bar ---- */
+/* Persistent product wordmark above every signed-in route. Quiet serif mark on
+   a hairline rule — the brand, distinct from each section's own masthead. */
+.brandbar {
+  padding: calc(14px + env(safe-area-inset-top)) 0 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.brandbar-mark {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: color 180ms ease-out;
+}
+
+.brandbar-mark:hover,
+.brandbar-mark:focus-visible {
+  color: var(--accent);
+  outline: none;
+}
+
 /* ---- masthead ---- */
 .masthead {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 14px;
-  padding: calc(26px + env(safe-area-inset-top)) 0 18px;
+  /* brandbar owns the top safe-area inset now — keep just the section spacing */
+  padding: 26px 0 18px;
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -922,7 +947,8 @@ button.tag::after {
 .article-bar {
   display: flex;
   align-items: center;
-  padding: calc(14px + env(safe-area-inset-top)) 0 8px;
+  /* brandbar owns the top safe-area inset now — keep just the section spacing */
+  padding: 14px 0 8px;
   border-bottom: 1px solid var(--hairline);
 }
 

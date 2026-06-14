@@ -89,6 +89,7 @@ export function App() {
 
   return (
     <>
+      <BrandBar />
       {route.kind === "article" ? (
         <ArticleView type={route.type} slug={route.slug} onHide={hideCard} />
       ) : route.kind === "prefs" ? (
@@ -115,6 +116,20 @@ export function App() {
         )}
       </div>
     </>
+  );
+}
+
+// Persistent brand line for the signed-in shell — sits above every route's
+// own masthead/back-bar so "TinyFeed" reads as the product, while each section
+// keeps its own title. AuthGate (main.tsx) means App only mounts when signed
+// in, so this never shows on the sign-in screen.
+function BrandBar() {
+  return (
+    <div className="brandbar">
+      <a className="brandbar-mark" href="#/">
+        TinyFeed
+      </a>
+    </div>
   );
 }
 
