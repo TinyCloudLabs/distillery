@@ -82,7 +82,7 @@ export function SignIn() {
     try {
       // Dynamic import keeps the SDK out of the signed-in bundle path.
       const { OpenKey } = await import("@openkey/sdk");
-      const openkey = new OpenKey({ appName: "distillery", host: OPENKEY_HOST });
+      const openkey = new OpenKey({ appName: "TinyFeed", host: OPENKEY_HOST });
       const authResult = await openkey.connect();
       const res = await fetch("/auth/openkey", {
         method: "POST",
@@ -106,7 +106,7 @@ export function SignIn() {
     <>
       <header className="masthead">
         <div>
-          <h1 className="masthead-title">Distillery</h1>
+          <h1 className="masthead-title">TinyFeed</h1>
           <p className="masthead-sub">Private feed &middot; sign in required</p>
         </div>
       </header>

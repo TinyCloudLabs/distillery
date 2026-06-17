@@ -225,7 +225,7 @@ function Feed({
     <>
       <header className="masthead">
         <div>
-          <h1 className="masthead-title">Distillery</h1>
+          <h1 className="masthead-title">TinyFeed</h1>
           <p className="masthead-sub">
             {edition(cards)}
             {visible.length}/{total} artifacts

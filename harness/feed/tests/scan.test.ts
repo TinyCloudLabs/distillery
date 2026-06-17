@@ -20,6 +20,7 @@ describe("scanArtifacts", () => {
     expect(cards.map((c) => c.id).sort()).toEqual([
       "approved-snippet-1",
       "art-1",
+      "clip-1",
       "draft-blank-status-1",
       "draft-missing-status-1",
       "draft-pending-1",
@@ -33,6 +34,7 @@ describe("scanArtifacts", () => {
     const cards = await scanArtifacts(fx.dir);
     expect(cards.map((c) => c.id)).toEqual([
       "pod-1",
+      "clip-1",
       "draft-pending-1",
       "draft-missing-status-1",
       "draft-blank-status-1",
@@ -48,6 +50,10 @@ describe("scanArtifacts", () => {
     const pod = cards.find((c) => c.id === "pod-1")!;
     expect(pod.audio_url).toBe("/media/podcast/newest-podcast/episode.m4a");
     expect(pod.hero_image_url).toBe("/media/podcast/newest-podcast/hero.png");
+
+    const clip = cards.find((c) => c.id === "clip-1")!;
+    expect(clip.video_url).toBe("/media/clip/constraint-box/clip-captioned.mp4");
+    expect(clip.hero_image_url).toBe("/media/clip/constraint-box/poster.png");
 
     // hero_image referenced but missing on disk → no URL emitted
     const ins = cards.find((c) => c.id === "ins-1")!;

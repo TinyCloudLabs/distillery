@@ -1,6 +1,6 @@
 {
-  "name": "Distillery",
-  "short_name": "Distillery",
+  "name": "TinyFeed",
+  "short_name": "TinyFeed",
   "description": "Meeting transcripts distilled into an editorial feed.",
   "start_url": "/",
   "scope": "/",

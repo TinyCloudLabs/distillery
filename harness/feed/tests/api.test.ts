@@ -32,13 +32,14 @@ describe("GET /api/cards", () => {
     const res = await app.request("/api/cards");
     expect(res.status).toBe(200);
     const body = (await res.json()) as CardsResponse;
-    // 5 PUBLISHED cards: 3 internal (pod-1, ins-1, unk-1, art-1) + 1 approved
+    // 6 PUBLISHED cards: 4 internal (pod-1, clip-1, ins-1, unk-1, art-1) + 1 approved
     // outward (approved-snippet-1). The pending outward draft is excluded.
-    expect(body.total).toBe(5);
+    expect(body.total).toBe(6);
     expect(body.offset).toBe(0);
     expect(body.hasMore).toBe(false);
     expect(body.cards.map((c) => c.id)).toEqual([
       "pod-1",
+      "clip-1",
       "ins-1",
       "approved-snippet-1",
       "unk-1",
@@ -50,11 +51,11 @@ describe("GET /api/cards", () => {
 
   test("paginates with limit and offset", async () => {
     const p1 = (await (await app.request("/api/cards?limit=2&offset=0")).json()) as CardsResponse;
-    expect(p1.cards.map((c) => c.id)).toEqual(["pod-1", "ins-1"]);
+    expect(p1.cards.map((c) => c.id)).toEqual(["pod-1", "clip-1"]);
     expect(p1.hasMore).toBe(true);
 
     const p2 = (await (await app.request("/api/cards?limit=2&offset=2")).json()) as CardsResponse;
-    expect(p2.cards.map((c) => c.id)).toEqual(["approved-snippet-1", "unk-1"]);
+    expect(p2.cards.map((c) => c.id)).toEqual(["ins-1", "approved-snippet-1"]);
     expect(p2.hasMore).toBe(true);
   });
 
@@ -63,7 +64,7 @@ describe("GET /api/cards", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as CardsResponse;
     expect(body.offset).toBe(0);
-    expect(body.cards.length).toBe(5);
+    expect(body.cards.length).toBe(6);
   });
 });
 
@@ -74,6 +75,15 @@ describe("GET /api/cards/:type/:slug", () => {
     const card = (await res.json()) as FeedCard;
     expect(card.id).toBe("pod-1");
     expect(card.audio_url).toBe("/media/podcast/newest-podcast/episode.m4a");
+  });
+
+  test("returns a playable clip URL when a clip artifact records a video tag", async () => {
+    const res = await app.request("/api/cards/clip/constraint-box");
+    expect(res.status).toBe(200);
+    const card = (await res.json()) as FeedCard;
+    expect(card.id).toBe("clip-1");
+    expect(card.video_url).toBe("/media/clip/constraint-box/clip-captioned.mp4");
+    expect(card.hero_image_url).toBe("/media/clip/constraint-box/poster.png");
   });
 
   test("404s for missing cards", async () => {

@@ -27,6 +27,14 @@ function mediaUrl(type: string, slug: string, file: string): string {
   return `/media/${encodeURIComponent(type)}/${encodeURIComponent(slug)}/${encodeURIComponent(file)}`;
 }
 
+function videoFileFromTags(tags: readonly string[]): string | undefined {
+  for (const tag of tags) {
+    const m = /^video:(.+)$/i.exec(tag.trim());
+    if (m?.[1]?.trim()) return m[1].trim();
+  }
+  return undefined;
+}
+
 /**
  * Read one artifact dir. Returns null if there is no parseable artifact.json
  * with the minimum fields a card needs (id + headline).
@@ -96,6 +104,10 @@ async function readArtifactDir(
     if (await fileExists(join(dir, a.audio))) {
       card.audio_url = mediaUrl(type, slug, a.audio);
     }
+  }
+  const videoFile = videoFileFromTags(card.tags);
+  if (videoFile && (await fileExists(join(dir, videoFile)))) {
+    card.video_url = mediaUrl(type, slug, videoFile);
   }
 
   return card;

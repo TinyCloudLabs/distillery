@@ -195,6 +195,24 @@ function AudioRow({ src }: { src: string }) {
   );
 }
 
+function VideoBlock({ card }: { card: FeedCard }) {
+  if (!card.video_url) return null;
+  return (
+    <figure className="video">
+      <video
+        src={card.video_url}
+        poster={card.hero_image_url}
+        controls
+        autoPlay
+        loop
+        muted
+        preload="metadata"
+        playsInline
+      />
+    </figure>
+  );
+}
+
 /* ---- pull quote: red left rule, serif italic, mono cite ---- */
 
 function QuoteBlock({ card }: { card: FeedCard }) {
@@ -416,7 +434,9 @@ export function Card({
       <h2 className="headline">
         {isArticle ? <a href={cardHref(card)}>{card.headline}</a> : card.headline}
       </h2>
-      {card.hero_image_url && (
+      {card.video_url ? (
+        <VideoBlock card={card} />
+      ) : card.hero_image_url ? (
         <figure className="hero">
           <img
             src={card.hero_image_url}
@@ -429,7 +449,7 @@ export function Card({
             }}
           />
         </figure>
-      )}
+      ) : null}
       <QuoteBlock card={card} />
       {body && <Body text={body} />}
       {isArticle && card.body && (
@@ -458,11 +478,13 @@ export function FullCard({
     <article className="card article">
       <Kicker card={card} />
       <h1 className="headline">{card.headline}</h1>
-      {card.hero_image_url && (
+      {card.video_url ? (
+        <VideoBlock card={card} />
+      ) : card.hero_image_url ? (
         <figure className="hero">
           <img src={card.hero_image_url} alt="" decoding="async" />
         </figure>
-      )}
+      ) : null}
       <QuoteBlock card={card} />
       {card.body && <Body text={card.body} />}
       {card.audio_url && <AudioRow src={card.audio_url} />}

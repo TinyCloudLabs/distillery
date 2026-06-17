@@ -32,7 +32,8 @@ from the feedback event log (`feedback/events.jsonl`).
 
 <!-- example (not a real preference): -->
 <!-- - [learned] More capability-model deep dives (2× more + 1 promote on openkey-tagged cards, Jun 2026) -->
-- [learned] More foundational/strategic theses on TinyCloud's positioning and why its data/credential layer matters — founding-era wedge, property-rights/credentials frame (5 more + 3 promote across the founding-wedge + eigenlayer cards, Jun 2026)
+- [learned] More foundational/strategic theses on TinyCloud's positioning and why its data/credential layer matters — founding-era wedge, property-rights/credentials/data-sovereignty/interoperability frame (11 more on positioning + 6 more on founding-era + 5 promote across founding-wedge/eigenlayer/apple-icloud/interoperability cards, Jun 2026)
+- [learned] Less fundraising-mechanics / raise-status content — bridge-round, quantified-drift on the ask, and LOI-strategy land as stale or duplicative (4× less: shrinking-ask clip 3× "duplicate"/"not insightful" + LOI card 1× "a bit old in terms of where the raise is at", Jun 2026)
 
 ## Novelty bar
 
@@ -43,14 +44,14 @@ from the feedback event log (`feedback/events.jsonl`).
 
 <!-- example (not a real preference): -->
 <!-- - [learned] Micro-podcasts earn deeper artifacts (2 promote actions on podcast cards, Jun 2026) -->
-- [learned] Insight cards are landing — keep producing them (5 more + 4 save + 3 promote across 2 insight-cards, Jun 2026)
-- [learned] Single-voice-thesis cards earn deeper artifacts — promote them into expanded pieces (3 promote on single-voice-thesis cards, Jun 2026)
+- [learned] Insight cards are landing — keep producing them (7 more + 4 save + 4 promote across insight-cards, Jun 2026)
+- [learned] Single-voice-thesis cards earn deeper artifacts — promote them into expanded pieces (5 promote on single-voice-thesis cards, Jun 2026)
 
 ## Style
 
 <!-- example (not a real preference): -->
 <!-- - [learned] Prefer quote-anchored claims over summary prose (wrong actions cluster on unquoted claims, Jun 2026) -->
-- [learned] Lead with one person's strategic thesis in their own voice — a single-voice claim no one else in the corpus echoes (5 more + 4 save + 3 promote on single-voice-thesis-tagged cards, Jun 2026)
+- [learned] Lead with one person's strategic thesis in their own voice — a single-voice claim no one else in the corpus echoes (12 more + 4 save + 5 promote on single-voice-thesis-tagged cards, Jun 2026)
 
 ## Cadence
 

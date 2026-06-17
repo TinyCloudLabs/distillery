@@ -69,7 +69,7 @@ const app = createApp({
 const hostname = process.env.HOST ?? "127.0.0.1";
 const server = Bun.serve({ port, hostname, fetch: app.fetch });
 
-console.log(`distillery feed  http://${server.hostname}:${server.port}`);
+console.log(`TinyFeed         http://${server.hostname}:${server.port}`);
 console.log(`artifacts        ${artifactsDir}`);
 console.log(`feedback         ${feedbackFile}`);
 console.log(`preferences      ${preferencesFile}`);

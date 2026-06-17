@@ -62,6 +62,7 @@ export interface FeedCard extends Artifact {
   slug: string;
   hero_image_url?: string;
   audio_url?: string;
+  video_url?: string;
 }
 
 export interface CardsResponse {

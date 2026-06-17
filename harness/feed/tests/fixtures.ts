@@ -61,6 +61,24 @@ export async function makeFixture(): Promise<Fixture> {
     },
   );
 
+  await write(
+    "clip",
+    "constraint-box",
+    artifact({
+      id: "clip-1",
+      type: "clip",
+      headline: "Constraint box",
+      hero_image: "poster.png",
+      generated_at: "2026-06-08T18:00:00Z",
+      tags: ["make-clip", "video:clip-captioned.mp4", "video-clean:clip-clean.mp4"],
+    }),
+    {
+      "clip-captioned.mp4": new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 1, 2, 3, 4, 5, 6]),
+      "clip-clean.mp4": new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 7, 8, 9, 10]),
+      "poster.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    },
+  );
+
   // Middle: insight card whose hero_image is referenced but MISSING on disk
   await write(
     "insight-card",
