@@ -234,6 +234,72 @@ bun test
 bunx tsc --noEmit
 ```
 
+## Artifact feed submodule
+
+This repo vendors the TinyCloud artifact feed as a git submodule at
+[`submodules/feed`](./submodules/feed). The feed is the pure-client frontend
+that reads `xyz.tinycloud.artifacts` directly from TinyCloud and delegates
+generation to the distillery backend.
+
+When cloning this repo from scratch, clone with submodules:
+
+```sh
+git clone --recurse-submodules https://github.com/TinyCloudLabs/artifactory.git
+```
+
+If the repo was already cloned, or after pulling a change that updates the feed
+submodule pointer, inflate it from the repo root:
+
+```sh
+bun run artifact:inflate
+```
+
+That initializes `submodules/feed`, installs the root distillery dependencies,
+and installs the feed dependencies.
+
+### Run frontend + distillery backend
+
+Run both sides together:
+
+```sh
+bun run artifact:dev
+```
+
+This starts:
+
+- distillery agent backend: `http://localhost:4097`
+- feed frontend: `http://localhost:5173`
+
+It also wires a matching local `AGENT_API_TOKEN` / `VITE_AGENT_TOKEN` for the
+two processes.
+
+To run the two sides manually:
+
+```sh
+# Terminal 1: distillery backend
+export AGENT_API_TOKEN=local-artifact-dev
+export AGENT_ALLOWED_ORIGIN=http://localhost:5173
+bun run artifact:backend
+
+# Terminal 2: feed frontend
+export VITE_AGENT_HOST=http://localhost:4097
+export VITE_AGENT_TOKEN=local-artifact-dev
+bun run artifact:frontend
+```
+
+### Test the stack
+
+```sh
+bun run artifact:frontend:check
+bun run artifact:backend:smoke
+bun run artifact:test
+```
+
+`artifact:frontend:check` runs the feed typecheck and production build.
+`artifact:backend:smoke` starts the distillery backend on a temporary local port
+and verifies `GET /agent/info`. `artifact:test` runs both checks and then the
+distillery test suite.
+
 The Folio feed app has its own workspace under `harness/feed/`:
 
 ```sh

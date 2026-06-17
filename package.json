@@ -5,6 +5,13 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "artifact:inflate": "bash scripts/artifact-inflate.sh",
+    "artifact:dev": "bash scripts/artifact-dev.sh",
+    "artifact:frontend": "bash scripts/artifact-feed-dev.sh",
+    "artifact:frontend:check": "bash scripts/artifact-feed-check.sh",
+    "artifact:backend": "bash scripts/artifact-distillery-backend.sh",
+    "artifact:backend:smoke": "bash scripts/artifact-backend-smoke.sh",
+    "artifact:test": "bash scripts/artifact-check.sh",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"
   },
