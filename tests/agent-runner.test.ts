@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { classifyListenReadResult } from "../harness/agent/src/listen-read-outcome.ts";
+import { shouldPublishArtifact } from "../harness/agent/src/runner.ts";
 
 describe("agent runner listen-read classification", () => {
   test("explicit no-transcripts output is a valid empty Listen run", () => {
@@ -40,5 +41,38 @@ describe("agent runner listen-read classification", () => {
     expect(classifyListenReadResult({ code: 0, stdout: "", stderr: "" })).toEqual({
       kind: "ok",
     });
+  });
+});
+
+describe("agent runner artifact routing", () => {
+  test("holds public pending social posts for approval instead of publishing", () => {
+    expect(
+      shouldPublishArtifact({
+        type: "social-post",
+        audience: "public",
+        approval_status: "pending",
+      }),
+    ).toEqual({
+      publish: false,
+      reason: "audience=public requires approval surface",
+    });
+  });
+
+  test("publishes internal feed artifacts", () => {
+    expect(
+      shouldPublishArtifact({
+        type: "article",
+      }),
+    ).toEqual({ publish: true });
+  });
+
+  test("allows internal person briefs through the feed path", () => {
+    expect(
+      shouldPublishArtifact({
+        type: "person-brief",
+        audience: "internal",
+        approval_status: "pending",
+      }),
+    ).toEqual({ publish: true });
   });
 });

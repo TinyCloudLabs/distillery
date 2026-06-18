@@ -36,6 +36,7 @@ import { spawn } from "node:child_process";
 import { config } from "./config.ts";
 import type { ActiveDelegation } from "./session.ts";
 import { classifyListenReadResult } from "./listen-read-outcome.ts";
+import { ARTIFACT_TYPES, isOutwardType, type ArtifactType } from "../../../skills/_shared/lib/formats.ts";
 
 export type RunStatus = "queued" | "running" | "done" | "error";
 
@@ -62,6 +63,11 @@ interface SpawnResult {
 }
 
 type EnvMode = "sandbox" | "generate";
+
+interface RunHooks {
+  heartbeatMs?: number;
+  onHeartbeat?: () => void | Promise<void>;
+}
 
 /**
  * Run a command from the repo root.
@@ -92,23 +98,42 @@ type EnvMode = "sandbox" | "generate";
  *    add-dir vector but do NOT fully sandbox the filesystem. Real confinement
  *    (separate uid / container / TEE) is the phase-2 (Phala) hardening.
  */
-function run(cmd: string, args: string[], mode: EnvMode = "sandbox"): Promise<SpawnResult> {
+function run(
+  cmd: string,
+  args: string[],
+  mode: EnvMode = "sandbox",
+  hooks: RunHooks = {},
+): Promise<SpawnResult> {
   const env =
     mode === "sandbox"
       ? { ...process.env, HOME: config.tcHome }
       : buildGenerateEnv();
   return new Promise((resolve, reject) => {
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     const child = spawn(cmd, args, {
       cwd: config.repoRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (hooks.onHeartbeat) {
+      heartbeat = setInterval(() => {
+        Promise.resolve(hooks.onHeartbeat?.()).catch(() => {
+          // Best-effort status visibility; never fail the child for log writes.
+        });
+      }, hooks.heartbeatMs ?? 30_000);
+    }
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    child.on("error", (err) => {
+      if (heartbeat) clearInterval(heartbeat);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      if (heartbeat) clearInterval(heartbeat);
+      resolve({ code: code ?? 0, stdout, stderr });
+    });
   });
 }
 
@@ -268,6 +293,13 @@ export async function runPipeline(
     "claude",
     buildGenerationArgs(corpusDir, artifactsDir, transcripts),
     "generate",
+    {
+      heartbeatMs: 30_000,
+      onHeartbeat: async () => {
+        const count = (await listArtifactDirs(artifactsDir)).length;
+        step(`generate: still running (${count} artifact dir(s) currently on disk)`);
+      },
+    },
   );
   if (gen.code !== 0) {
     throw new Error(`generate failed (exit ${gen.code}): ${gen.stderr.slice(-800) || gen.stdout.slice(-800)}`);
@@ -275,18 +307,26 @@ export async function runPipeline(
 
   // 3. PUBLISH — each generated artifact to the user's xyz.tinycloud.artifacts
   //    (KV media + SQL feed row, approval_status='approved'), under delegation.
-  const artifactDirs = await listArtifactDirs(artifactsDir);
-  step(`publish: ${artifactDirs.length} artifact(s) to the user's space`);
-  for (const dir of artifactDirs) {
-    const pub = await run("bun", [SKILLS.publish, dir, "--space", active.spaceId]);
+  const artifactRoutes = await listArtifactRoutes(artifactsDir);
+  const publishable = artifactRoutes.filter((route) => route.publish);
+  const drafts = artifactRoutes.filter((route) => !route.publish);
+  step(
+    `publish: ${publishable.length} artifact(s) to the user's space; ` +
+      `${drafts.length} draft(s) held for approval`,
+  );
+  for (const draft of drafts) {
+    step(`publish: held draft ${draft.type}/${draft.slug} (${draft.reason})`);
+  }
+  for (const artifact of publishable) {
+    const pub = await run("bun", [SKILLS.publish, artifact.dir, "--space", active.spaceId]);
     if (pub.code !== 0) {
       throw new Error(
-        `publish failed for ${dir} (exit ${pub.code}): ${pub.stderr.slice(-800) || pub.stdout.slice(-800)}`,
+        `publish failed for ${artifact.dir} (exit ${pub.code}): ${pub.stderr.slice(-800) || pub.stdout.slice(-800)}`,
       );
     }
-    const ref = await readArtifactRef(dir);
+    const ref = await readArtifactRef(artifact.dir);
     if (ref) state.published.push(ref);
-    step(`publish: ${ref ? `${ref.type}/${ref.slug}` : dir} published`);
+    step(`publish: ${ref ? `${ref.type}/${ref.slug}` : artifact.dir} published`);
   }
 
     state.status = "done";
@@ -485,6 +525,90 @@ async function listArtifactDirs(artifactsDir: string): Promise<string[]> {
     }
   }
   return out;
+}
+
+interface ArtifactRoute {
+  dir: string;
+  type: string;
+  slug: string;
+  audience?: string;
+  approval_status?: string;
+  publish: boolean;
+  reason?: string;
+}
+
+function isArtifactType(type: string): type is ArtifactType {
+  return (ARTIFACT_TYPES as readonly string[]).includes(type);
+}
+
+export function shouldPublishArtifact(input: {
+  type: string;
+  audience?: string;
+  approval_status?: string;
+}): { publish: boolean; reason?: string } {
+  if (input.audience === "public" || input.audience === "investors") {
+    return {
+      publish: false,
+      reason: `audience=${input.audience} requires approval surface`,
+    };
+  }
+  if (
+    input.approval_status === "pending" &&
+    isArtifactType(input.type) &&
+    isOutwardType(input.type) &&
+    input.audience !== "internal"
+  ) {
+    return {
+      publish: false,
+      reason: `approval_status=pending for outward type ${input.type}`,
+    };
+  }
+  return { publish: true };
+}
+
+async function readArtifactRoute(dir: string): Promise<ArtifactRoute | null> {
+  try {
+    const raw = await readFile(join(dir, "artifact.json"), "utf8");
+    const artifact = JSON.parse(raw) as {
+      type?: unknown;
+      slug?: unknown;
+      audience?: unknown;
+      approval_status?: unknown;
+    };
+    const fallback = await readArtifactRef(dir);
+    const type =
+      typeof artifact.type === "string" ? artifact.type : fallback?.type ?? "unknown";
+    const slug =
+      typeof artifact.slug === "string" ? artifact.slug : fallback?.slug ?? "unknown";
+    const audience =
+      typeof artifact.audience === "string" ? artifact.audience : undefined;
+    const approval_status =
+      typeof artifact.approval_status === "string"
+        ? artifact.approval_status
+        : undefined;
+    const decision = shouldPublishArtifact({ type, audience, approval_status });
+    return {
+      dir,
+      type,
+      slug,
+      audience,
+      approval_status,
+      publish: decision.publish,
+      reason: decision.reason,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function listArtifactRoutes(artifactsDir: string): Promise<ArtifactRoute[]> {
+  const dirs = await listArtifactDirs(artifactsDir);
+  const routes: ArtifactRoute[] = [];
+  for (const dir of dirs) {
+    const route = await readArtifactRoute(dir);
+    if (route) routes.push(route);
+  }
+  return routes;
 }
 
 /** Read { type, slug } off an artifact dir for the published[] response. */
