@@ -125,9 +125,9 @@
         commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>351ec93</code></div>
+        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>6fcd07d</code></div>
         <div class="pill"><strong>Feed:</strong> 5 commits ahead of origin/main through <code>4a7ec01</code></div>
-        <div class="pill"><strong>Latest functional checkpoint:</strong> Feed polls by progress heartbeat</div>
+        <div class="pill"><strong>Latest functional checkpoint:</strong> all agent child stages heartbeat</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS</div>
       </div>
     </header>
@@ -240,6 +240,12 @@
             <td>Serializes HTTP and Smithers agent runs across processes with a disk-backed lock, preventing concurrent use of the delegated tc profile.</td>
             <td><code>harness/agent/src/runs.ts</code>, <code>.smithers/workflows/agent-run-staged.tsx</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">6fcd07d</span></td>
+            <td>Heartbeat all agent child stages</td>
+            <td>Adds tunable progress heartbeats for Listen-read and publish, matching generate, so every external child stage can keep Feed and stale-run reconciliation informed.</td>
+            <td><code>harness/agent/src/runner.ts</code>, <code>harness/agent/src/config.ts</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -294,10 +300,11 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>4a7ec01 Poll agent runs by progress heartbeat</code>.
-        Feed now times out only after no fresh backend progress log arrives for
-        20 minutes, matching Artifactory's generate heartbeat instead of ending
-        live long-running builds at a fixed wall-clock limit.
+        <code>6fcd07d Heartbeat all agent child stages</code>.
+        Artifactory now writes heartbeat progress for Listen-read, generate, and
+        publish child processes, using <code>AGENT_STAGE_HEARTBEAT_MS</code>, so
+        Feed and stale-run reconciliation have progress evidence across the full
+        pipeline.
       </p>
     </section>
 
