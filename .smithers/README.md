@@ -17,6 +17,10 @@ bun run smithers:dev-mode
 - Local Artifactory agent at `https://agent.feed.localhost:1355`
 - Local Gemini development env, sourced from `DEV_DISTILLERY_ENV` or
   `~/development.nosync/distillery/.env`
+- Portless route/listener evidence plus endpoint fetches. Endpoint checks can
+  report `blocked` when a restricted agent sandbox cannot connect to localhost;
+  in that case rerun the workflow outside the sandbox before treating Portless
+  as broken.
 
 Start the two surfaces with:
 
