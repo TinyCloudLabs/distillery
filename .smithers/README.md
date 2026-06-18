@@ -40,9 +40,10 @@ returns a bounded log tail in the Smithers output.
 For now, treat `agent-run` as an operator/dev command, not the production HTTP
 control path. The HTTP server still serializes its own in-process runs, and this
 workflow does not yet share a cross-process run lock with the server. The next
-orchestration migration is to split the current runner stages into separate
-Smithers tasks so each stage has independent retry, observability, and
-backpressure.
+orchestration migration is to wire the exported runner stage helpers
+(`createPipelineContext`, `runListenReadStage`, `runGenerateStage`,
+`runPublishStage`) as separate Smithers tasks so each stage has independent
+retry, observability, and backpressure.
 
 The generated Smithers pack intentionally keeps secrets out of git. Local API
 keys are a development bridge only; the target home is TinyCloud Secret Manager.

@@ -69,6 +69,20 @@ interface RunHooks {
   onHeartbeat?: () => void | Promise<void>;
 }
 
+export interface PipelineContext {
+  active: ActiveDelegation;
+  state: RunState;
+  onProgress: (s: RunState) => void;
+  space: string;
+  corpusDir: string;
+  artifactsDir: string;
+  step: (msg: string) => void;
+}
+
+export type ListenReadStageResult =
+  | { kind: "ready"; transcripts: string[] }
+  | { kind: "empty" };
+
 /**
  * Run a command from the repo root.
  *
@@ -223,116 +237,25 @@ export async function runPipeline(
   state: RunState,
   onProgress: (s: RunState) => void,
 ): Promise<void> {
-  const space = active.spaceId;
-  const corpusDir = join(config.runsDir, state.run_id, "corpus");
-  const artifactsDir = join(config.runsDir, state.run_id, "artifacts");
-
-  const step = (msg: string) => {
-    state.log.push(`${new Date().toISOString()} ${msg}`);
-    onProgress(state);
-  };
+  const ctx = createPipelineContext(active, state, onProgress);
 
   state.status = "running";
-  step("run started");
+  ctx.step("run started");
 
-  // 0700: corpus holds the user's RAW Listen transcripts — never group/other-readable.
-  await mkdir(corpusDir, { recursive: true, mode: 0o700 });
-  await mkdir(artifactsDir, { recursive: true, mode: 0o700 });
+  await prepareRunScratch(ctx);
 
   try {
-  // NO bootstrap step: the front end owns table creation (it has feed +
-  // interactions write on the owner's own session). The agent's minimal
-  // delegation can't CREATE the interactions/control tables, so running
-  // bootstrap-schema here would 401 and crash. tc-publish below does a pure
-  // INSERT into the pre-existing `feed` table (+ media KV) — both delegated.
+    // NO bootstrap step: the front end owns table creation (it has feed +
+    // interactions write on the owner's own session). The agent's minimal
+    // delegation can't CREATE the interactions/control tables, so running
+    // bootstrap-schema here would 401 and crash. tc-publish below does a pure
+    // INSERT into the pre-existing `feed` table (+ media KV) — both delegated.
 
-  // 1. LISTEN-READ — pull the user's transcripts into a per-run corpus. EMPTY
-  //    -SAFE: exit 1 + "No non-empty transcripts" → 0 transcripts → valid, done.
-  step("listen-read: fetching the user's Listen transcripts");
-  const read = await run("bun", [
-    SKILLS.listenRead,
-    "--out",
-    corpusDir,
-    "--count",
-    String(config.transcriptCount),
-    "--space",
-    space,
-  ]);
+    const read = await runListenReadStage(ctx);
+    if (read.kind === "empty") return;
 
-  const transcripts = await listCorpus(corpusDir);
-  const readOutcome = classifyListenReadResult(read);
-  if (readOutcome.kind === "error") {
-    const code = readOutcome.code ? `${readOutcome.code}: ` : "";
-    step(`listen-read: failed (${code}${readOutcome.message})`);
-    throw new Error(`listen-read failed (${code}${readOutcome.message})`);
-  }
-  if (transcripts.length === 0) {
-    if (readOutcome.kind === "ok") {
-      const detail = "listen-read exited 0 but wrote no transcript files";
-      step(`listen-read: failed (${detail})`);
-      throw new Error(`listen-read failed (${detail})`);
-    }
-    step(
-      `listen-read: 0 transcripts (empty-Listen path) — read exit=${read.code}. ` +
-        `Completing with 0 artifacts (valid).`,
-    );
-    state.status = "done";
-    state.finishedAt = Date.now();
-    onProgress(state);
-    return;
-  }
-  step(`listen-read: ${transcripts.length} transcript(s) fetched`);
-
-  // 2. GENERATE — headless claude over the corpus → tweet + article into the
-  //    per-run artifacts dir. Mirrors harness/feed-run's run-generation recipe.
-  step("generate: distilling tweet + article from the corpus");
-  // SCRUBBED env + minimal HOME (only a ~/.claude symlink): claude reads its own
-  // credentials and writes artifact files locally, but a prompt-injected
-  // transcript can't reach ~/.tinycloud, the agent state, env secrets, or `tc`.
-  const gen = await run(
-    "claude",
-    buildGenerationArgs(corpusDir, artifactsDir, transcripts),
-    "generate",
-    {
-      heartbeatMs: 30_000,
-      onHeartbeat: async () => {
-        const count = (await listArtifactDirs(artifactsDir)).length;
-        step(`generate: still running (${count} artifact dir(s) currently on disk)`);
-      },
-    },
-  );
-  if (gen.code !== 0) {
-    throw new Error(`generate failed (exit ${gen.code}): ${gen.stderr.slice(-800) || gen.stdout.slice(-800)}`);
-  }
-
-  // 3. PUBLISH — each generated artifact to the user's xyz.tinycloud.artifacts
-  //    (KV media + SQL feed row, approval_status='approved'), under delegation.
-  const artifactRoutes = await listArtifactRoutes(artifactsDir);
-  const publishable = artifactRoutes.filter((route) => route.publish);
-  const drafts = artifactRoutes.filter((route) => !route.publish);
-  for (const route of artifactRoutes) {
-    for (const warning of route.mediaWarnings ?? []) {
-      step(`artifact media: ${route.type}/${route.slug}: ${warning}`);
-    }
-  }
-  step(
-    `publish: ${publishable.length} artifact(s) to the user's space; ` +
-      `${drafts.length} draft(s) held for approval`,
-  );
-  for (const draft of drafts) {
-    step(`publish: held draft ${draft.type}/${draft.slug} (${draft.reason})`);
-  }
-  for (const artifact of publishable) {
-    const pub = await run("bun", [SKILLS.publish, artifact.dir, "--space", active.spaceId]);
-    if (pub.code !== 0) {
-      throw new Error(
-        `publish failed for ${artifact.dir} (exit ${pub.code}): ${pub.stderr.slice(-800) || pub.stdout.slice(-800)}`,
-      );
-    }
-    const ref = await readArtifactRef(artifact.dir);
-    if (ref) state.published.push(ref);
-    step(`publish: ${ref ? `${ref.type}/${ref.slug}` : artifact.dir} published`);
-  }
+    await runGenerateStage(ctx, read.transcripts);
+    await runPublishStage(ctx);
 
     state.status = "done";
     state.finishedAt = Date.now();
@@ -342,6 +265,131 @@ export async function runPipeline(
     // artifacts/) on BOTH success and error — they hold the user's raw Listen
     // data and shouldn't linger on disk. status.json is preserved for polling.
     await cleanupRunScratch(state.run_id);
+  }
+}
+
+export function createPipelineContext(
+  active: ActiveDelegation,
+  state: RunState,
+  onProgress: (s: RunState) => void,
+): PipelineContext {
+  const corpusDir = join(config.runsDir, state.run_id, "corpus");
+  const artifactsDir = join(config.runsDir, state.run_id, "artifacts");
+  return {
+    active,
+    state,
+    onProgress,
+    space: active.spaceId,
+    corpusDir,
+    artifactsDir,
+    step: (msg: string) => {
+      state.log.push(`${new Date().toISOString()} ${msg}`);
+      onProgress(state);
+    },
+  };
+}
+
+export async function prepareRunScratch(ctx: PipelineContext): Promise<void> {
+  // 0700: corpus holds the user's RAW Listen transcripts — never group/other-readable.
+  await mkdir(ctx.corpusDir, { recursive: true, mode: 0o700 });
+  await mkdir(ctx.artifactsDir, { recursive: true, mode: 0o700 });
+}
+
+export async function runListenReadStage(ctx: PipelineContext): Promise<ListenReadStageResult> {
+  // LISTEN-READ — pull the user's transcripts into a per-run corpus. EMPTY-SAFE:
+  // exit 1 + "No non-empty transcripts" → 0 transcripts → valid, done.
+  ctx.step("listen-read: fetching the user's Listen transcripts");
+  const read = await run("bun", [
+    SKILLS.listenRead,
+    "--out",
+    ctx.corpusDir,
+    "--count",
+    String(config.transcriptCount),
+    "--space",
+    ctx.space,
+  ]);
+
+  const transcripts = await listCorpus(ctx.corpusDir);
+  const readOutcome = classifyListenReadResult(read);
+  if (readOutcome.kind === "error") {
+    const code = readOutcome.code ? `${readOutcome.code}: ` : "";
+    ctx.step(`listen-read: failed (${code}${readOutcome.message})`);
+    throw new Error(`listen-read failed (${code}${readOutcome.message})`);
+  }
+  if (transcripts.length === 0) {
+    if (readOutcome.kind === "ok") {
+      const detail = "listen-read exited 0 but wrote no transcript files";
+      ctx.step(`listen-read: failed (${detail})`);
+      throw new Error(`listen-read failed (${detail})`);
+    }
+    ctx.step(
+      `listen-read: 0 transcripts (empty-Listen path) — read exit=${read.code}. ` +
+        `Completing with 0 artifacts (valid).`,
+    );
+    ctx.state.status = "done";
+    ctx.state.finishedAt = Date.now();
+    ctx.onProgress(ctx.state);
+    return { kind: "empty" };
+  }
+  ctx.step(`listen-read: ${transcripts.length} transcript(s) fetched`);
+  return { kind: "ready", transcripts };
+}
+
+export async function runGenerateStage(
+  ctx: PipelineContext,
+  transcripts: string[],
+): Promise<void> {
+  // GENERATE — headless claude over the corpus → tweet + article into the per-run
+  // artifacts dir. Mirrors harness/feed-run's run-generation recipe.
+  ctx.step("generate: distilling tweet + article from the corpus");
+  // SCRUBBED env + minimal HOME (only a ~/.claude symlink): claude reads its own
+  // credentials and writes artifact files locally, but a prompt-injected
+  // transcript can't reach ~/.tinycloud, the agent state, env secrets, or `tc`.
+  const gen = await run(
+    "claude",
+    buildGenerationArgs(ctx.corpusDir, ctx.artifactsDir, transcripts),
+    "generate",
+    {
+      heartbeatMs: 30_000,
+      onHeartbeat: async () => {
+        const count = (await listArtifactDirs(ctx.artifactsDir)).length;
+        ctx.step(`generate: still running (${count} artifact dir(s) currently on disk)`);
+      },
+    },
+  );
+  if (gen.code !== 0) {
+    throw new Error(`generate failed (exit ${gen.code}): ${gen.stderr.slice(-800) || gen.stdout.slice(-800)}`);
+  }
+}
+
+export async function runPublishStage(ctx: PipelineContext): Promise<void> {
+  // PUBLISH — each generated artifact to the user's xyz.tinycloud.artifacts
+  // (KV media + SQL feed row, approval_status='approved'), under delegation.
+  const artifactRoutes = await listArtifactRoutes(ctx.artifactsDir);
+  const publishable = artifactRoutes.filter((route) => route.publish);
+  const drafts = artifactRoutes.filter((route) => !route.publish);
+  for (const route of artifactRoutes) {
+    for (const warning of route.mediaWarnings ?? []) {
+      ctx.step(`artifact media: ${route.type}/${route.slug}: ${warning}`);
+    }
+  }
+  ctx.step(
+    `publish: ${publishable.length} artifact(s) to the user's space; ` +
+      `${drafts.length} draft(s) held for approval`,
+  );
+  for (const draft of drafts) {
+    ctx.step(`publish: held draft ${draft.type}/${draft.slug} (${draft.reason})`);
+  }
+  for (const artifact of publishable) {
+    const pub = await run("bun", [SKILLS.publish, artifact.dir, "--space", ctx.active.spaceId]);
+    if (pub.code !== 0) {
+      throw new Error(
+        `publish failed for ${artifact.dir} (exit ${pub.code}): ${pub.stderr.slice(-800) || pub.stdout.slice(-800)}`,
+      );
+    }
+    const ref = await readArtifactRef(artifact.dir);
+    if (ref) ctx.state.published.push(ref);
+    ctx.step(`publish: ${ref ? `${ref.type}/${ref.slug}` : artifact.dir} published`);
   }
 }
 

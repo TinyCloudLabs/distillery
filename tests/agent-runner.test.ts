@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyListenReadResult } from "../harness/agent/src/listen-read-outcome.ts";
 import {
+  createPipelineContext,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
+  type RunState,
 } from "../harness/agent/src/runner.ts";
+import type { ActiveDelegation } from "../harness/agent/src/session.ts";
 
 describe("agent runner listen-read classification", () => {
   test("explicit no-transcripts output is a valid empty Listen run", () => {
@@ -80,6 +83,37 @@ describe("agent runner artifact routing", () => {
         approval_status: "pending",
       }),
     ).toEqual({ publish: true });
+  });
+});
+
+describe("agent runner pipeline context", () => {
+  test("derives per-run scratch paths and records progress logs", () => {
+    const state: RunState = {
+      run_id: "run-1781811113187-abc123",
+      status: "queued",
+      published: [],
+      startedAt: Date.now(),
+      log: [],
+    };
+    const progress: RunState[] = [];
+    const active = {
+      spaceId: "did:pkh:eip155:1:0x0000000000000000000000000000000000000001",
+      delegationCid: "bafy-test",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      grantedAt: Date.now(),
+      delegation: {},
+    };
+
+    const ctx = createPipelineContext(active as unknown as ActiveDelegation, state, (next) => {
+      progress.push({ ...next, published: [...next.published], log: [...next.log] });
+    });
+    ctx.step("unit-test stage marker");
+
+    expect(ctx.space).toBe(active.spaceId);
+    expect(ctx.corpusDir.endsWith("/run-1781811113187-abc123/corpus")).toBe(true);
+    expect(ctx.artifactsDir.endsWith("/run-1781811113187-abc123/artifacts")).toBe(true);
+    expect(state.log[0]).toContain("unit-test stage marker");
+    expect(progress).toHaveLength(1);
   });
 });
 

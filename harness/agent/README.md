@@ -177,8 +177,11 @@ durable development workflows, backpressure planning, and run triage. The
 persisted delegation, and runs the same skill chain as `/agent/run` while
 recording Smithers workflow state. The production `/agent/run` endpoint still
 executes the pipeline directly through `runner.ts`; migrating that endpoint onto
-stage-level Smithers tasks is the next orchestration step. For local development
-checks, run:
+stage-level Smithers tasks is the next orchestration step. `runner.ts` exports
+the stage helpers (`createPipelineContext`, `runListenReadStage`,
+`runGenerateStage`, `runPublishStage`) so the Smithers workflow can reuse the
+same implementation rather than growing a parallel pipeline. For local
+development checks, run:
 
 ```sh
 bun run smithers:doctor

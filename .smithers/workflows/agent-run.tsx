@@ -70,7 +70,7 @@ export default smithers((ctx) => (
         const notes = [
           "This Smithers workflow reuses harness/agent/src/runner.ts so the current TinyCloud delegation and skill behavior stay identical to /agent/run.",
           "Run it only as an operator/dev entry point for now; the HTTP server still serializes its own in-process runs, and this workflow does not yet share a cross-process lock with the server.",
-          "Next migration step: split listen-read, generate, media preflight, and publish into separate Smithers tasks for stage-level retry/backpressure.",
+          "runner.ts now exports createPipelineContext plus listen-read/generate/publish stage helpers; the next migration step is wiring those helpers as separate Smithers tasks for stage-level retry/backpressure.",
         ];
 
         try {
