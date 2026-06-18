@@ -122,13 +122,13 @@
         This report lists the local PR-style checkpoints made while routing the old
         distillery behavior into the new Artifactory plus Feed development path.
         No GitHub PRs were opened from this workspace during this pass; these are
-        commits ahead of each repo's <code>origin/main</code>, plus one current WIP file.
+        commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> 11 commits ahead of origin/main</div>
+        <div class="pill"><strong>Artifactory:</strong> 13 commits ahead of origin/main through <code>351ec93</code></div>
         <div class="pill"><strong>Feed:</strong> 3 commits ahead of origin/main</div>
-        <div class="pill"><strong>Latest checkpoint:</strong> staged Smithers workflow</div>
-        <div class="pill"><strong>Validated recently:</strong> tests, TS, Smithers graph</div>
+        <div class="pill"><strong>Latest checkpoint:</strong> shared agent run lock</div>
+        <div class="pill"><strong>Validated recently:</strong> tests, TS, Smithers list/doctor</div>
       </div>
     </header>
 
@@ -145,7 +145,7 @@
         </article>
         <article class="card">
           <h3>Smithers</h3>
-          <p>Dev-mode workflow, agent-run bridge, exported runner stage helpers, and WIP staged workflow for node-level observability.</p>
+          <p>Dev-mode workflow, agent-run bridge, staged workflow nodes, and a shared run lock with the HTTP agent path.</p>
         </article>
       </div>
     </section>
@@ -228,6 +228,18 @@
             <td>Adds <code>smithers:agent-run:staged</code>, breaking agent runs into preflight, listen, generate, publish, and cleanup workflow nodes.</td>
             <td><code>.smithers/workflows/agent-run-staged.tsx</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">3fd953d</span></td>
+            <td>Add Feed Artifactory checkpoint report</td>
+            <td>Adds this local HTML artifact so the migration checkpoints can be reviewed outside git.</td>
+            <td><code>review/feed-artifactory-change-report.html</code></td>
+          </tr>
+          <tr>
+            <td><span class="hash">351ec93</span></td>
+            <td>Add shared agent run lock</td>
+            <td>Serializes HTTP and Smithers agent runs across processes with a disk-backed lock, preventing concurrent use of the delegated tc profile.</td>
+            <td><code>harness/agent/src/runs.ts</code>, <code>.smithers/workflows/agent-run-staged.tsx</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -269,10 +281,11 @@
     <section>
       <h2>Latest Checkpoint</h2>
       <p class="note">
-        <span class="status-wip">Newest local checkpoint:</span>
-        <code>artifactory/.smithers/workflows/agent-run-staged.tsx</code>.
-        This is the next Smithers step: separate preflight, Listen-read,
-        generate, publish, and cleanup nodes while reusing the runner helpers.
+        <span class="status-ok">Newest local checkpoint:</span>
+        <code>351ec93 Add shared agent run lock</code>.
+        HTTP <code>/agent/run</code>, <code>smithers:agent-run</code>, and
+        <code>smithers:agent-run:staged</code> now share one
+        <code>AGENT_RUNS_DIR/agent-run.lock</code>.
       </p>
     </section>
 
@@ -280,8 +293,9 @@
       <h2>Validation Evidence</h2>
       <ul>
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/agent-runner.test.ts tests/listen-read-lib.test.ts</code></li>
-        <li><span class="status-ok">Artifactory:</span> <code>bunx tsc --noEmit</code></li>
-        <li><span class="status-ok">Smithers:</span> <code>bun run typecheck</code> in <code>.smithers</code></li>
+        <li><span class="status-ok">Artifactory:</span> <code>bun run typecheck</code></li>
+        <li><span class="status-ok">Smithers:</span> <code>bun run smithers:list</code></li>
+        <li><span class="status-ok">Smithers:</span> <code>bun run smithers:doctor</code></li>
         <li><span class="status-ok">Stale run cleanup:</span> <code>run-1781811131857-3r6pbz</code> is now <code>error</code>, not <code>running</code>.</li>
       </ul>
     </section>
