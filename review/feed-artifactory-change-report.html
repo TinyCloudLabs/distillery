@@ -126,8 +126,8 @@
       </p>
       <div class="meta">
         <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>351ec93</code></div>
-        <div class="pill"><strong>Feed:</strong> 4 commits ahead of origin/main through <code>6640126</code></div>
-        <div class="pill"><strong>Latest functional checkpoint:</strong> Feed attaches to locked runs</div>
+        <div class="pill"><strong>Feed:</strong> 5 commits ahead of origin/main through <code>4a7ec01</code></div>
+        <div class="pill"><strong>Latest functional checkpoint:</strong> Feed polls by progress heartbeat</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS</div>
       </div>
     </header>
@@ -280,6 +280,12 @@
             <td>Treats backend <code>409 run_in_progress</code> as an active run to poll, matching Artifactory's shared run lock instead of showing a generic failure.</td>
             <td><code>web/src/agentClient.ts</code>, <code>web/src/useAgentBuild.ts</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">4a7ec01</span></td>
+            <td>Poll agent runs by progress heartbeat</td>
+            <td>Changes Feed's 20-minute run timeout from wall-clock elapsed time to no-progress time, so long active generations keep polling while Artifactory heartbeat logs advance.</td>
+            <td><code>web/src/agentClient.ts</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -288,10 +294,10 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>6640126 Attach to locked agent runs</code>.
-        Feed now converts Artifactory's <code>run_in_progress</code> response
-        into an attached poll of the active run, so the UI follows backend
-        backpressure instead of surfacing a generic 409.
+        <code>4a7ec01 Poll agent runs by progress heartbeat</code>.
+        Feed now times out only after no fresh backend progress log arrives for
+        20 minutes, matching Artifactory's generate heartbeat instead of ending
+        live long-running builds at a fixed wall-clock limit.
       </p>
     </section>
 
