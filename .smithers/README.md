@@ -10,6 +10,7 @@ bun run smithers:doctor
 bun run smithers:list
 bun run smithers:dev-mode
 bun run smithers:agent-run
+bun run smithers:agent-run:staged
 ```
 
 `feed-dev-mode` probes the current local development setup:
@@ -44,6 +45,13 @@ orchestration migration is to wire the exported runner stage helpers
 (`createPipelineContext`, `runListenReadStage`, `runGenerateStage`,
 `runPublishStage`) as separate Smithers tasks so each stage has independent
 retry, observability, and backpressure.
+
+`agent-run-staged` is that first stage-level workflow. It is still an
+operator/dev entry point, but it breaks a run into Smithers nodes:
+`preflight → listen → generate → publish → cleanup`. It uses the same runner
+helpers as `/agent/run`, so behavior stays aligned while Smithers gains
+stage-level logs and retry/replay boundaries. A cold graph initially shows only
+`preflight`; downstream nodes are rendered as prior task outputs exist.
 
 The generated Smithers pack intentionally keeps secrets out of git. Local API
 keys are a development bridge only; the target home is TinyCloud Secret Manager.

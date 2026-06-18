@@ -194,7 +194,13 @@ development checks, run:
 bun run smithers:doctor
 bun run smithers:dev-mode
 bun run smithers:agent-run
+bun run smithers:agent-run:staged
 ```
+
+`smithers:agent-run:staged` is the first stage-level orchestration path:
+`preflight → listen → generate → publish → cleanup`. It remains an operator/dev
+entry point until the HTTP endpoint has a shared cross-process run lock and can
+delegate to Smithers safely.
 
 ## Runtime state — TWO separate roots, both outside the repo, dir mode `0700`
 
