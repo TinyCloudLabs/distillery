@@ -157,6 +157,23 @@ describe("agent run stale-state reconciliation", () => {
     expect(changed).toBe(false);
     expect(state.status).toBe("running");
   });
+
+  test("keeps running runs with recent non-generate stage progress", () => {
+    const now = Date.parse("2026-06-18T19:40:16.704Z");
+    const { state, changed } = reconcileStaleRun(
+      runState({
+        log: [
+          "2026-06-18T19:32:16.704Z publish: publishing article/demo",
+          "2026-06-18T19:39:56.704Z publish: still publishing article/demo",
+        ],
+      }),
+      now,
+      20 * 60 * 1000,
+    );
+
+    expect(changed).toBe(false);
+    expect(state.status).toBe("running");
+  });
 });
 
 describe("agent run lock reclamation", () => {

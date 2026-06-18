@@ -186,9 +186,11 @@ export const config = {
   transcriptCount: Number(process.env.AGENT_TRANSCRIPT_COUNT ?? 5),
   /** Generation model for the headless `claude -p` step. */
   genModel: process.env.AGENT_GEN_MODEL ?? "opus",
+  /** How often long-running child stages append progress logs. */
+  stageHeartbeatMs: Number(process.env.AGENT_STAGE_HEARTBEAT_MS ?? 30 * 1000),
   /** A queued/running status with no log progress beyond this age is reconciled
-   *  to error on read/list. Generate heartbeats every 30s, so this primarily
-   *  catches server restarts, lost child processes, or abandoned pre-heartbeat
-   *  runs without blocking legitimate long generations. */
+   *  to error on read/list. Child stages heartbeat every stageHeartbeatMs, so
+   *  this primarily catches server restarts, lost child processes, or abandoned
+   *  pre-heartbeat runs without blocking legitimate long generations. */
   runStaleMs: Number(process.env.AGENT_RUN_STALE_MS ?? 20 * 60 * 1000),
 } as const;

@@ -101,6 +101,7 @@ Env (all optional):
 | `AGENT_STATE_DIR` | `~/.tinycloud-agent` | CREDENTIALS + tc-home (outside the repo; never `--add-dir`'d — see "Credential placement"; dir `0700`) |
 | `AGENT_RUNS_DIR` | `~/.tinycloud-agent-runs` (or `<AGENT_STATE_DIR>-runs`) | run scratch (corpus/artifacts), a SEPARATE root from credentials so the generate deny doesn't overlap the `--add-dir`'d scratch |
 | `AGENT_RUN_STALE_MS` | `1200000` | queued/running run records with no progress log newer than this are reconciled to `error` on read/list |
+| `AGENT_STAGE_HEARTBEAT_MS` | `30000` | child-stage heartbeat interval for Listen-read, generate, and publish progress logs |
 | `AGENT_TC_PROFILE` | `delegated` | sandbox tc profile the delegation activates |
 | `AGENT_NAME` | `Distillery Agent` | advertised in `/agent/info` |
 | `AGENT_TRANSCRIPT_COUNT` | `5` | Listen transcripts pulled per run |
@@ -156,6 +157,10 @@ env). The tc CLI's config dir is `os.homedir()/.tinycloud` with no env override
 
 `bootstrap → listen-read → generate → critic → publish`, all under the
 delegation, into a per-run scratch dir (`<AGENT_RUNS_DIR>/<id>/`):
+
+Each external child stage writes heartbeat progress at
+`AGENT_STAGE_HEARTBEAT_MS`, so Feed can distinguish a live long-running stage
+from a genuinely stale run.
 
 1. **listen-read** — `tc-listen-read/listen-read.ts` pulls the user's Listen
    transcripts into the run's corpus. **Empty-Listen-safe:** 0 transcripts →

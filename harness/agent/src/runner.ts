@@ -299,15 +299,25 @@ export async function runListenReadStage(ctx: PipelineContext): Promise<ListenRe
   // LISTEN-READ — pull the user's transcripts into a per-run corpus. EMPTY-SAFE:
   // exit 1 + "No non-empty transcripts" → 0 transcripts → valid, done.
   ctx.step("listen-read: fetching the user's Listen transcripts");
-  const read = await run("bun", [
-    SKILLS.listenRead,
-    "--out",
-    ctx.corpusDir,
-    "--count",
-    String(config.transcriptCount),
-    "--space",
-    ctx.space,
-  ]);
+  const read = await run(
+    "bun",
+    [
+      SKILLS.listenRead,
+      "--out",
+      ctx.corpusDir,
+      "--count",
+      String(config.transcriptCount),
+      "--space",
+      ctx.space,
+    ],
+    "sandbox",
+    {
+      heartbeatMs: config.stageHeartbeatMs,
+      onHeartbeat: () => {
+        ctx.step("listen-read: still fetching transcripts");
+      },
+    },
+  );
 
   const transcripts = await listCorpus(ctx.corpusDir);
   const readOutcome = classifyListenReadResult(read);
@@ -350,7 +360,7 @@ export async function runGenerateStage(
     buildGenerationArgs(ctx.corpusDir, ctx.artifactsDir, transcripts),
     "generate",
     {
-      heartbeatMs: 30_000,
+      heartbeatMs: config.stageHeartbeatMs,
       onHeartbeat: async () => {
         const count = (await listArtifactDirs(ctx.artifactsDir)).length;
         ctx.step(`generate: still running (${count} artifact dir(s) currently on disk)`);
@@ -381,7 +391,19 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
     ctx.step(`publish: held draft ${draft.type}/${draft.slug} (${draft.reason})`);
   }
   for (const artifact of publishable) {
-    const pub = await run("bun", [SKILLS.publish, artifact.dir, "--space", ctx.active.spaceId]);
+    const label = `${artifact.type}/${artifact.slug}`;
+    ctx.step(`publish: publishing ${label}`);
+    const pub = await run(
+      "bun",
+      [SKILLS.publish, artifact.dir, "--space", ctx.active.spaceId],
+      "sandbox",
+      {
+        heartbeatMs: config.stageHeartbeatMs,
+        onHeartbeat: () => {
+          ctx.step(`publish: still publishing ${label}`);
+        },
+      },
+    );
     if (pub.code !== 0) {
       throw new Error(
         `publish failed for ${artifact.dir} (exit ${pub.code}): ${pub.stderr.slice(-800) || pub.stdout.slice(-800)}`,
@@ -389,7 +411,7 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
     }
     const ref = await readArtifactRef(artifact.dir);
     if (ref) ctx.state.published.push(ref);
-    ctx.step(`publish: ${ref ? `${ref.type}/${ref.slug}` : artifact.dir} published`);
+    ctx.step(`publish: ${ref ? `${ref.type}/${ref.slug}` : label} published`);
   }
 }
 
