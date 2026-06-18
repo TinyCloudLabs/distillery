@@ -1,8 +1,9 @@
 // runs.ts — durable per-run state for GET /agent/run/:id. Each run is a dir
 // under config.runsDir/<run_id>/ with a status.json the server rewrites as the
-// pipeline advances. Disk-backed so a poll survives a server restart mid-run
-// (the run itself is in-process, so a restart marks an unfinished run as error
-// on next read — see reconcile()).
+// pipeline advances. Disk-backed so a poll survives a server restart mid-run.
+// The run itself is in-process, so a restart can leave a frozen queued/running
+// status; readRun/listRuns reconcile those stale records to error once their
+// last log heartbeat ages past config.runStaleMs.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -55,11 +56,23 @@ export function writeRun(state: RunState): void {
 export function readRun(runId: string): RunState | null {
   const path = statusPath(runId);
   if (!existsSync(path)) return null;
+  let parsed: RunState;
   try {
-    return JSON.parse(readFileSync(path, "utf-8")) as RunState;
+    parsed = JSON.parse(readFileSync(path, "utf-8")) as RunState;
   } catch {
     return null;
   }
+  const { state, changed } = reconcileStaleRun(parsed);
+  if (changed) {
+    try {
+      writeRun(state);
+    } catch {
+      // Return the reconciled state even if this process cannot persist it
+      // (for example, a restricted sandbox probing a home-dir run record).
+      // The real server normally has write access and will persist on read.
+    }
+  }
+  return state;
 }
 
 /** Run ids are server-minted; reject anything that could escape runsDir. */
@@ -68,6 +81,50 @@ export function isValidRunId(runId: string): boolean {
 }
 
 const RUN_STATUSES: readonly RunStatus[] = ["queued", "running", "done", "error"];
+
+export function reconcileStaleRun(
+  state: RunState,
+  now = Date.now(),
+  staleMs = config.runStaleMs,
+): { state: RunState; changed: boolean } {
+  if (state.status !== "queued" && state.status !== "running") {
+    return { state, changed: false };
+  }
+  if (!Number.isFinite(staleMs) || staleMs <= 0) {
+    return { state, changed: false };
+  }
+  const lastProgressAt = lastRunProgressAt(state);
+  if (!Number.isFinite(lastProgressAt) || now - lastProgressAt < staleMs) {
+    return { state, changed: false };
+  }
+
+  const staleMinutes = Math.max(1, Math.round((now - lastProgressAt) / 60_000));
+  const priorStatus = state.status;
+  const error =
+    `Run became stale after ${staleMinutes} min without progress ` +
+    `(last status: ${priorStatus}). The agent process likely restarted or lost ` +
+    `its child process; start a new run.`;
+  const reconciled: RunState = {
+    ...state,
+    status: "error",
+    error,
+    finishedAt: now,
+    log: [...(Array.isArray(state.log) ? state.log : []), `${new Date(now).toISOString()} ERROR: ${error}`],
+  };
+  return { state: reconciled, changed: true };
+}
+
+function lastRunProgressAt(state: RunState): number {
+  const logs = Array.isArray(state.log) ? state.log : [];
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const line = logs[i];
+    if (typeof line !== "string") continue;
+    const stamp = line.slice(0, 24);
+    const parsed = Date.parse(stamp);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return typeof state.startedAt === "number" ? state.startedAt : 0;
+}
 
 /**
  * Defensively map a parsed status.json to a RunSummary, or null if it isn't
@@ -107,10 +164,9 @@ function toSummary(state: RunState): RunSummary | null {
  * corrupt files) — NOT the whole history — so the cost is ~O(limit), not
  * O(total runs). A final sort by startedAt keeps strict newest-first.
  *
- * STALENESS: a "running"/"queued" summary can be stale after a server restart
- * (the run is in-process, so a restart leaves its last-written status frozen).
- * There's no reconcile() here yet — the front end's poll on GET /agent/run/:id
- * is what resolves a stalled run for the user.
+ * STALENESS: readRun reconciles a frozen queued/running record to error when
+ * its last log timestamp is older than config.runStaleMs, so listRuns cannot
+ * keep advertising abandoned runs forever after a restart/crash/lost child.
  */
 export function listRuns(limit = 25): RunSummary[] {
   if (!existsSync(config.runsDir)) return [];

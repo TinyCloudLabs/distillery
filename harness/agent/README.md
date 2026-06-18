@@ -25,6 +25,12 @@ GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedA
 bounded log tail so a client can detect an in-progress build and show useful
 progress without loading full run scratch state.
 
+Queued/running records are reconciled on read: if the last recorded progress log
+is older than `AGENT_RUN_STALE_MS` (default 20 minutes), the server rewrites the
+run to `error` with a stale-run explanation. This catches server restarts,
+crashes, and lost child processes so Feed does not show an abandoned build as
+running forever.
+
 `permissions` advertises the scopes the user must delegate: Listen-read on
 `xyz.tinycloud.listen` (SQL `conversations` read + KV `transcript` get/list) and
 read/write on `xyz.tinycloud.artifacts` (SQL feed + KV media). The front end
@@ -88,6 +94,7 @@ Env (all optional):
 | `TINYCLOUD_HOST` | `https://node.tinycloud.xyz` | node the agent signs into + the delegation targets |
 | `AGENT_STATE_DIR` | `~/.tinycloud-agent` | CREDENTIALS + tc-home (outside the repo; never `--add-dir`'d — see "Credential placement"; dir `0700`) |
 | `AGENT_RUNS_DIR` | `~/.tinycloud-agent-runs` (or `<AGENT_STATE_DIR>-runs`) | run scratch (corpus/artifacts), a SEPARATE root from credentials so the generate deny doesn't overlap the `--add-dir`'d scratch |
+| `AGENT_RUN_STALE_MS` | `1200000` | queued/running run records with no progress log newer than this are reconciled to `error` on read/list |
 | `AGENT_TC_PROFILE` | `delegated` | sandbox tc profile the delegation activates |
 | `AGENT_NAME` | `Distillery Agent` | advertised in `/agent/info` |
 | `AGENT_TRANSCRIPT_COUNT` | `5` | Listen transcripts pulled per run |

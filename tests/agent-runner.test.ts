@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyListenReadResult } from "../harness/agent/src/listen-read-outcome.ts";
+import { reconcileStaleRun } from "../harness/agent/src/runs.ts";
 import {
   createPipelineContext,
   sanitizeArtifactMediaForPublish,
@@ -114,6 +115,47 @@ describe("agent runner pipeline context", () => {
     expect(ctx.artifactsDir.endsWith("/run-1781811113187-abc123/artifacts")).toBe(true);
     expect(state.log[0]).toContain("unit-test stage marker");
     expect(progress).toHaveLength(1);
+  });
+});
+
+describe("agent run stale-state reconciliation", () => {
+  function runState(overrides: Partial<RunState> = {}): RunState {
+    return {
+      run_id: "run-1781811131857-3r6pbz",
+      status: "running",
+      published: [],
+      startedAt: Date.parse("2026-06-18T19:32:11.857Z"),
+      log: ["2026-06-18T19:32:16.704Z generate: distilling tweet + article from the corpus"],
+      ...overrides,
+    };
+  }
+
+  test("marks abandoned running runs as error after the stale threshold", () => {
+    const now = Date.parse("2026-06-18T19:53:16.704Z");
+    const { state, changed } = reconcileStaleRun(runState(), now, 20 * 60 * 1000);
+
+    expect(changed).toBe(true);
+    expect(state.status).toBe("error");
+    expect(state.finishedAt).toBe(now);
+    expect(state.error).toContain("became stale");
+    expect(state.log.at(-1)).toContain("ERROR: Run became stale");
+  });
+
+  test("keeps running runs with recent heartbeat progress", () => {
+    const now = Date.parse("2026-06-18T19:40:16.704Z");
+    const { state, changed } = reconcileStaleRun(
+      runState({
+        log: [
+          "2026-06-18T19:32:16.704Z generate: distilling tweet + article from the corpus",
+          "2026-06-18T19:39:56.704Z generate: still running (1 artifact dir(s) currently on disk)",
+        ],
+      }),
+      now,
+      20 * 60 * 1000,
+    );
+
+    expect(changed).toBe(false);
+    expect(state.status).toBe("running");
   });
 });
 
