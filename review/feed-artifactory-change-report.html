@@ -125,9 +125,9 @@
         commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>6fcd07d</code></div>
-        <div class="pill"><strong>Feed:</strong> 5 commits ahead of origin/main through <code>4a7ec01</code></div>
-        <div class="pill"><strong>Latest functional checkpoint:</strong> all agent child stages heartbeat</div>
+        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>cb9c1ee</code></div>
+        <div class="pill"><strong>Feed:</strong> 6 commits ahead of origin/main through <code>4b12cb9</code></div>
+        <div class="pill"><strong>Latest functional checkpoint:</strong> Feed shows run lock state</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS</div>
       </div>
     </header>
@@ -246,6 +246,12 @@
             <td>Adds tunable progress heartbeats for Listen-read and publish, matching generate, so every external child stage can keep Feed and stale-run reconciliation informed.</td>
             <td><code>harness/agent/src/runner.ts</code>, <code>harness/agent/src/config.ts</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">cb9c1ee</span></td>
+            <td>Expose agent run lock state</td>
+            <td>Adds a shared lock summary to <code>GET /agent/runs</code> so operators can see the lock owner, age, and reclaimability without shell access.</td>
+            <td><code>harness/agent/src/runs.ts</code>, <code>harness/agent/src/server.ts</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -292,6 +298,12 @@
             <td>Changes Feed's 20-minute run timeout from wall-clock elapsed time to no-progress time, so long active generations keep polling while Artifactory heartbeat logs advance.</td>
             <td><code>web/src/agentClient.ts</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">4b12cb9</span></td>
+            <td>Show agent run lock state</td>
+            <td>Adds a Run lock section to Agents details, rendering the backend lock owner, age, run id, and reclaimability.</td>
+            <td><code>web/src/agentClient.ts</code>, <code>web/src/pages/Agents.tsx</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -300,11 +312,10 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>6fcd07d Heartbeat all agent child stages</code>.
-        Artifactory now writes heartbeat progress for Listen-read, generate, and
-        publish child processes, using <code>AGENT_STAGE_HEARTBEAT_MS</code>, so
-        Feed and stale-run reconciliation have progress evidence across the full
-        pipeline.
+        <code>4b12cb9 Show agent run lock state</code>.
+        Artifactory exposes the shared lock through <code>/agent/runs</code>, and
+        Feed renders it under Agents details so a held or reclaimable run lock is
+        visible without inspecting <code>AGENT_RUNS_DIR</code> by hand.
       </p>
     </section>
 
