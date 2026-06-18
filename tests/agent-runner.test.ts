@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyListenReadResult } from "../harness/agent/src/listen-read-outcome.ts";
-import { canReclaimRunLock, reconcileStaleRun } from "../harness/agent/src/runs.ts";
+import { canReclaimRunLock, reconcileStaleRun, summarizeRunLock } from "../harness/agent/src/runs.ts";
 import {
   createPipelineContext,
   sanitizeArtifactMediaForPublish,
@@ -205,6 +205,27 @@ describe("agent run lock reclamation", () => {
         20 * 60 * 1000,
       ),
     ).toBe(true);
+  });
+
+  test("summarizes lock age and reclaimability for visibility surfaces", () => {
+    expect(
+      summarizeRunLock(
+        {
+          run_id: "missing-run-state",
+          owner: "smithers-agent-run",
+          pid: 123,
+          acquiredAt: 1_000,
+        },
+        1_000 + 21 * 60 * 1000,
+      ),
+    ).toEqual({
+      run_id: "missing-run-state",
+      owner: "smithers-agent-run",
+      pid: 123,
+      acquiredAt: 1_000,
+      ageMs: 21 * 60 * 1000,
+      reclaimable: true,
+    });
   });
 });
 

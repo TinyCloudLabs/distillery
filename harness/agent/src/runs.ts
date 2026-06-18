@@ -39,6 +39,11 @@ export interface RunLock {
   acquiredAt: number;
 }
 
+export interface RunLockSummary extends RunLock {
+  ageMs: number;
+  reclaimable: boolean;
+}
+
 export type RunLockResult =
   | { ok: true; lock: RunLock }
   | { ok: false; activeRunId: string; message: string };
@@ -175,6 +180,19 @@ export function canReclaimRunLock(
     return state.status === "done" || state.status === "error";
   }
   return Number.isFinite(staleMs) && staleMs > 0 && now - lock.acquiredAt >= staleMs;
+}
+
+export function summarizeRunLock(lock: RunLock, now = Date.now()): RunLockSummary {
+  return {
+    ...lock,
+    ageMs: Math.max(0, now - lock.acquiredAt),
+    reclaimable: canReclaimRunLock(lock, now),
+  };
+}
+
+export function getRunLockSummary(now = Date.now()): RunLockSummary | null {
+  const lock = readRunLock();
+  return lock ? summarizeRunLock(lock, now) : null;
 }
 
 /** Read a run's state, or null if unknown. */

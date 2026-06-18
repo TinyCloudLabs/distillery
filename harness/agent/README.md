@@ -17,13 +17,15 @@ GET  /agent/info             → { did, name, permissions: PermissionEntry[] }  
 POST /agent/delegation       { serialized } → { ok, agentDid, delegationCid, spaceId, expiresAt }   (AUTH)
 POST /agent/run              {} (uses the stored delegation) → { run_id, status:"queued" }           (AUTH)
 GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", startedAt, finishedAt?, published?:[{type,slug}], log?:string[], error? }
-GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?:[{type,slug}], log?:string[], error? }] }   (public)
+GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?:[{type,slug}], log?:string[], error? }], lock?: { run_id, owner, pid, acquiredAt, ageMs, reclaimable } }   (public)
 ```
 
 `GET /agent/run/:run_id` includes a bounded tail of recent stage log lines, and
 `GET /agent/runs` lists recent runs (newest first, capped at 25) with a smaller
 bounded log tail so a client can detect an in-progress build and show useful
-progress without loading full run scratch state.
+progress without loading full run scratch state. It also includes the shared
+run-lock summary when the lock exists, so operators can see whether HTTP or a
+Smithers workflow currently owns the runner and whether that lock is reclaimable.
 
 Queued/running records are reconciled on read: if the last recorded progress log
 is older than `AGENT_RUN_STALE_MS` (default 20 minutes), the server rewrites the

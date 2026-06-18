@@ -7,7 +7,7 @@
 //   POST /agent/delegation      { serialized } → { ok, agentDid, delegationCid, spaceId, expiresAt }
 //   POST /agent/run             {} → { run_id, status:"queued" }
 //   GET  /agent/run/:run_id     → { run_id, status, published?[], error? }
-//   GET  /agent/runs            → { runs: RunSummary[] }  (recent runs, light)
+//   GET  /agent/runs            → { runs: RunSummary[], lock? }  (recent runs + shared lock)
 //
 // Run from the distillery repo root:  bun harness/agent/src/server.ts
 //   AGENT_PORT (4097) AGENT_HOST_BIND (127.0.0.1) TINYCLOUD_HOST AGENT_STATE_DIR
@@ -23,6 +23,7 @@ import {
   acquireRunLock,
   createRun,
   createRunId,
+  getRunLockSummary,
   isValidRunId,
   listRuns,
   readRun,
@@ -210,7 +211,8 @@ function handleGetRun(req: Request, runId: string): Response {
 /** List recent runs (light summaries) so a client can detect an in-progress
  *  build. Public — same as GET /agent/info and GET /agent/run/:id. */
 function handleListRuns(req: Request): Response {
-  return json(req, 200, { runs: listRuns() });
+  const lock = getRunLockSummary();
+  return json(req, 200, { runs: listRuns(), ...(lock ? { lock } : {}) });
 }
 
 /** 401 for a mutating request that lacks the valid per-install token. */
