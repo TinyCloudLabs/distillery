@@ -1,14 +1,12 @@
 // node-sdk.ts — resolve + re-export the @tinycloud/node-sdk handles the agent
 // backend needs (useDelegation / deserializeDelegation / PrivateKeySigner /
-// TinyCloudNode), mirroring how skills/_shared/lib/tc.ts resolves `tc-local`.
+// TinyCloudNode).
 //
-// Why a resolver and not a plain `import "@tinycloud/node-sdk"`: this distillery
-// worktree's js-sdk is a submodule POINTER (unbuilt — no dist/). The BUILT
-// node-sdk lives in the primary tinycloud-dev checkout that `tc-local` runs
-// from. We import its dist/ directly (it has no extra install step) so the
-// agent server can mint a delegated session in-process exactly like Listen's
-// sidecar (useDelegation → restorable → tc profile). Override with NODE_SDK_DIST
-// when the worktree's own node-sdk is built or relocated.
+// The agent owns an explicit package dependency on @tinycloud/node-sdk so local
+// development does not depend on whatever global/local js-sdk checkout happens
+// to exist on the machine. NODE_SDK_DIST remains as an escape hatch for testing a
+// built GitHub checkout. The old absolute path fallback is retained only for
+// legacy machines that still have the historical tinycloud-dev layout.
 
 import { existsSync } from "node:fs";
 
@@ -33,10 +31,25 @@ function resolveNodeSdkPath(): string {
   );
 }
 
-// A late, dynamic import so the resolver runs at call time (not module-eval),
-// matching tc.ts's lazy `tcBin()`. The returned module is the node-sdk's full
-// ESM surface; callers destructure the handles they need.
+// A late, dynamic import so env overrides run at call time. The returned module
+// is the node-sdk's full ESM surface; callers destructure the handles they need.
 export async function loadNodeSdk(): Promise<typeof import("@tinycloud/node-sdk")> {
-  const path = resolveNodeSdkPath();
-  return (await import(path)) as typeof import("@tinycloud/node-sdk");
+  const override = process.env.NODE_SDK_DIST?.trim();
+  if (override) {
+    const path = resolveNodeSdkPath();
+    return (await import(path)) as typeof import("@tinycloud/node-sdk");
+  }
+  try {
+    return (await import("@tinycloud/node-sdk")) as typeof import("@tinycloud/node-sdk");
+  } catch (err) {
+    if (existsSync(DEFAULT_NODE_SDK_DIST)) {
+      return (await import(DEFAULT_NODE_SDK_DIST)) as typeof import("@tinycloud/node-sdk");
+    }
+    throw new Error(
+      `@tinycloud/node-sdk package import failed. Run 'bun install' in harness/agent ` +
+        `or set NODE_SDK_DIST to a built dist/index.js. Cause: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+    );
+  }
 }

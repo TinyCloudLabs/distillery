@@ -6,8 +6,11 @@
 // lives in the OWNER's `applications` space:
 //   - conversations (SQL): --db xyz.tinycloud.listen/conversations  → tables
 //     `conversation`, `participant`.
-//   - transcripts (KV): xyz.tinycloud.listen/transcript/<conversationId> →
-//     JSON array of { index, speaker_id, speaker_name, text, start_time, … }.
+//   - transcripts (KV, importer path): xyz.tinycloud.listen/transcript/<conversationId>
+//     → JSON array of { index, speaker_id, speaker_name, text, start_time, … }.
+//   - transcripts (Listen app path): inline `conversation.transcript_json` or
+//     `conversation.transcript_text` columns when the app stores normalized
+//     Fireflies rows directly in SQL.
 //
 // Access model (§3.4): the agent runs the real read; on AUTH_UNAUTHORIZED the
 // caller drives the delegate-asks-owner handshake (request → owner grant →
@@ -59,6 +62,10 @@ export interface ConversationMeta {
   title: string;
   /** ISO-ish start time if the row carries one (display only). */
   started_at?: string;
+  /** Inline transcript JSON used by the Listen app for some synced sources. */
+  transcript_json?: string;
+  /** Plain transcript text fallback used by the Listen app for some sources. */
+  transcript_text?: string;
 }
 
 /** One spoken turn in a Listen transcript (the KV JSON array element shape). */
@@ -70,6 +77,103 @@ export interface TranscriptTurn {
   start_time?: number;
   end_time?: number;
   language?: string;
+}
+
+function optionalString(row: unknown[], columnIndex: number | undefined): string | undefined {
+  if (columnIndex === undefined) return undefined;
+  const value = row[columnIndex];
+  if (value == null) return undefined;
+  const text = String(value).trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function asTranscriptTurn(value: unknown, index: number): TranscriptTurn | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const text =
+    typeof record.text === "string"
+      ? record.text
+      : typeof record.content === "string"
+        ? record.content
+        : typeof record.transcript === "string"
+          ? record.transcript
+          : "";
+  if (!text.trim()) return undefined;
+  const speaker =
+    typeof record.speaker_name === "string"
+      ? record.speaker_name
+      : typeof record.speakerName === "string"
+        ? record.speakerName
+        : typeof record.speaker === "string"
+          ? record.speaker
+          : undefined;
+  return {
+    index:
+      typeof record.index === "number"
+        ? record.index
+        : typeof record.idx === "number"
+          ? record.idx
+          : index,
+    speaker_id:
+      typeof record.speaker_id === "string"
+        ? record.speaker_id
+        : typeof record.speakerId === "string"
+          ? record.speakerId
+          : undefined,
+    speaker_name: speaker,
+    text,
+    start_time:
+      typeof record.start_time === "number"
+        ? record.start_time
+        : typeof record.startTime === "number"
+          ? record.startTime
+          : undefined,
+    end_time:
+      typeof record.end_time === "number"
+        ? record.end_time
+        : typeof record.endTime === "number"
+          ? record.endTime
+          : undefined,
+    language: typeof record.language === "string" ? record.language : undefined,
+  };
+}
+
+function transcriptTurnsFromJsonValue(value: unknown): TranscriptTurn[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry, index) => asTranscriptTurn(entry, index))
+      .filter((turn): turn is TranscriptTurn => Boolean(turn));
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["turns", "segments", "utterances", "transcript"]) {
+      const turns = transcriptTurnsFromJsonValue(record[key]);
+      if (turns.length > 0) return turns;
+    }
+  }
+  return [];
+}
+
+export function transcriptTurnsFromInline(meta: ConversationMeta): TranscriptTurn[] {
+  if (meta.transcript_json) {
+    try {
+      const parsed = JSON.parse(meta.transcript_json);
+      const turns = transcriptTurnsFromJsonValue(parsed);
+      if (turns.length > 0) return turns;
+    } catch {
+      // Fall through to transcript_text. The SQL row can carry both.
+    }
+  }
+  if (meta.transcript_text?.trim()) {
+    return [
+      {
+        index: 0,
+        speaker_name: "Transcript",
+        text: meta.transcript_text,
+      },
+    ];
+  }
+  return [];
 }
 
 /**
@@ -97,6 +201,17 @@ export async function listConversations(
   const startCol = ["started_at", "start_time", "date", "created_at"]
     .map(col)
     .find((c) => c >= 0);
+  const transcriptJsonCol = [
+    "transcript_json",
+    "transcript",
+    "segments_json",
+    "utterances_json",
+  ]
+    .map(col)
+    .find((c) => c >= 0);
+  const transcriptTextCol = ["transcript_text", "transcript_plaintext"]
+    .map(col)
+    .find((c) => c >= 0);
   if (idCol < 0) {
     throw new Error(
       `conversation table has no 'id' column (columns: ${res.columns.join(", ")})`,
@@ -104,14 +219,10 @@ export async function listConversations(
   }
   return res.rows.map((row) => ({
     id: String(row[idCol]),
-    title:
-      titleCol !== undefined && row[titleCol] != null
-        ? String(row[titleCol])
-        : String(row[idCol]),
-    started_at:
-      startCol !== undefined && row[startCol] != null
-        ? String(row[startCol])
-        : undefined,
+    title: optionalString(row, titleCol) ?? String(row[idCol]),
+    started_at: optionalString(row, startCol),
+    transcript_json: optionalString(row, transcriptJsonCol),
+    transcript_text: optionalString(row, transcriptTextCol),
   }));
 }
 
@@ -182,11 +293,10 @@ export async function dumpCorpus(
   opts: TcRunOptions = {},
 ): Promise<WrittenTranscript[]> {
   await mkdir(corpusDir, { recursive: true });
-  // Only a subset of conversation rows have a stored transcript (different
-  // import batches: the newest rows can be transcript-less while older
-  // fireflies imports carry one). List the transcript KV keys up front and keep
-  // only conversations whose id has a transcript — recency-first — so we never
-  // blind-probe hundreds of transcript-less rows.
+  // Different import paths store transcripts in different places. The importer
+  // writes KV blobs, while the Listen app can store Fireflies rows inline in SQL
+  // (`transcript_json` / `transcript_text`). List KV keys once so we can prefer
+  // the blob when present and avoid blind-probing every row.
   const keyList = await kvList(`${TRANSCRIPT_PREFIX}/`, { space: target.space }, opts);
   const transcriptIds = new Set(
     keyList.keys.map((k) => k.slice(`${TRANSCRIPT_PREFIX}/`.length)),
@@ -196,21 +306,23 @@ export async function dumpCorpus(
   // even as the conversation table grows; the intersection below is what bounds
   // the work, not this limit.
   const CONVERSATION_SCAN_LIMIT = 10_000;
-  const conversations = (
-    await listConversations(CONVERSATION_SCAN_LIMIT, target, opts)
-  ).filter((meta) => transcriptIds.has(meta.id));
+  const conversations = await listConversations(CONVERSATION_SCAN_LIMIT, target, opts);
   const written: WrittenTranscript[] = [];
   for (const meta of conversations) {
     if (written.length >= count) break;
     let turns: TranscriptTurn[];
-    try {
-      turns = await fetchTranscript(meta.id, target, opts);
-    } catch (e) {
-      // A conversation whose transcript key vanished between list and get is
-      // the same "nothing to distill" case as an empty transcript — skip it.
-      // Any other tc error (auth, unhosted, malformed) still throws loudly.
-      if (e instanceof TcCliError && e.code === "NOT_FOUND") continue;
-      throw e;
+    if (transcriptIds.has(meta.id)) {
+      try {
+        turns = await fetchTranscript(meta.id, target, opts);
+      } catch (e) {
+        // A conversation whose transcript key vanished between list and get is
+        // the same "nothing to distill" case as an empty transcript — skip it.
+        // Any other tc error (auth, unhosted, malformed) still throws loudly.
+        if (e instanceof TcCliError && e.code === "NOT_FOUND") continue;
+        throw e;
+      }
+    } else {
+      turns = transcriptTurnsFromInline(meta);
     }
     if (turns.length === 0) continue; // empty transcript — nothing to distill
     const md = renderTranscriptMarkdown(meta, turns);

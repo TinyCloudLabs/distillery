@@ -6,5 +6,9 @@
   "description": "Distillery agent backend: holds an agent key, accepts a user delegation, runs the artifact pipeline under it, publishing to the user's space.",
   "scripts": {
     "start": "bun src/server.ts"
+  },
+  "dependencies": {
+    "@tinycloud/cli": "0.7.0-beta.6",
+    "@tinycloud/node-sdk": "2.4.0-beta.3"
   }
 }

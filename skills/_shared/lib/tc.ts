@@ -14,23 +14,28 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 
-// The CLI on PATH (`tc`) is an OLD published @tinycloud/cli that lacks
-// `kv put --space`. The skills need the local source build (`tc-local`,
-// js-sdk master @ 0.7.0-beta.2). Resolve it explicitly; never silently use
-// the wrong binary (that would write KV to the wrong space / fail opaquely).
+const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
+const AGENT_PACKAGE_TC = resolve(REPO_ROOT, "harness/agent/node_modules/.bin/tc");
+
+// The CLI on PATH (`tc`) can be an OLD published @tinycloud/cli that lacks
+// delegation/space fixes the agent needs. Prefer the agent package's pinned CLI,
+// then the historical local source build if present, and only then PATH.
 const DEFAULT_TC_LOCAL =
   "/Users/samgbafa/Documents/github/tinycloud-dev/bin/tc-local";
 
 /**
  * Resolve the tc binary in priority order:
  *   1. TC_BIN env override (the project escape hatch, mirrors FEED_TC_BIN)
- *   2. the known tc-local source build, if present
- *   3. `tc` on PATH (last resort; may be too old for `kv put --space`)
+ *   2. harness/agent's pinned @tinycloud/cli package
+ *   3. the known tc-local source build, if present
+ *   4. `tc` on PATH (last resort; may be too old for delegation/space support)
  */
 export function tcBin(): string {
   const override = process.env.TC_BIN?.trim();
   if (override) return override;
+  if (existsSync(AGENT_PACKAGE_TC)) return AGENT_PACKAGE_TC;
   if (existsSync(DEFAULT_TC_LOCAL)) return DEFAULT_TC_LOCAL;
   return "tc";
 }
