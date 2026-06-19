@@ -121,12 +121,12 @@
       <p>
         This report lists the local PR-style checkpoints made while routing the old
         distillery behavior into the new Artifactory plus Feed development path.
-        No GitHub PRs were opened from this workspace during this pass; these are
-        commits ahead of each repo's <code>origin/main</code>.
+        No GitHub PRs were opened from this workspace during this pass; these
+        checkpoints have been pushed to each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>submodule edc9967</code></div>
-        <div class="pill"><strong>Feed:</strong> 11 commits ahead of origin/main through <code>edc9967</code></div>
+        <div class="pill"><strong>Artifactory:</strong> pushed through <code>e5a60b6</code></div>
+        <div class="pill"><strong>Feed:</strong> pushed through <code>edc9967</code></div>
         <div class="pill"><strong>Latest functional checkpoint:</strong> Smithers feed-run sees hot-take</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS/build</div>
       </div>
@@ -399,8 +399,8 @@
         <code>submodules/feed → edc9967</code>.
         The embedded Feed used by Artifactory dev/check now matches the sibling
         Feed checkout, so the Agents UI generation-settings work is visible in
-        both development paths. Push the Feed repo before sharing this Artifactory
-        pointer from a fresh clone.
+        both development paths. Feed <code>edc9967</code> and Artifactory
+        <code>e5a60b6</code> have both been pushed to <code>origin/main</code>.
       </p>
     </section>
 
@@ -433,8 +433,8 @@
     <section>
       <h2>Useful Commands</h2>
       <ul>
-        <li><code>cd artifactory && git log --oneline origin/main..HEAD</code></li>
-        <li><code>cd feed && git log --oneline origin/main..HEAD</code></li>
+        <li><code>cd artifactory && git status --short --branch</code></li>
+        <li><code>cd feed && git status --short --branch</code></li>
         <li><code>cd artifactory && bun run smithers:dev-mode</code></li>
         <li><code>cd artifactory && bun run smithers:agent-run</code></li>
         <li><code>cd artifactory && bun run smithers:agent-run:staged</code></li>
