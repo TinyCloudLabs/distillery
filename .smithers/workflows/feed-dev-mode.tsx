@@ -91,6 +91,18 @@ async function curlOk(url: string): Promise<{ status: "pass" | "fail" | "blocked
   }
 }
 
+async function gitRef(repo: string): Promise<{ ok: boolean; head: string; ref: string; detail: string }> {
+  const head = await runCapture("git", ["-C", repo, "rev-parse", "--short", "HEAD"]);
+  if (!head.ok) return { ok: false, head: "", ref: "", detail: head.detail };
+  const ref = await runCapture("git", ["-C", repo, "branch", "--show-current"]);
+  return {
+    ok: true,
+    head: head.detail.trim(),
+    ref: ref.detail.trim() || "detached",
+    detail: `${head.detail.trim()} (${ref.detail.trim() || "detached"})`,
+  };
+}
+
 export default smithers((ctx) => (
   <Workflow name="feed-dev-mode">
     <Task id="probe" output={outputs.devMode} retries={0}>
@@ -104,12 +116,39 @@ export default smithers((ctx) => (
           typeof ctx.input.devEnv === "string" ? ctx.input.devEnv : "~/development.nosync/distillery/.env";
         const feedRoot = resolve(cwd, feedRootInput);
         const devEnv = expandHome(devEnvInput);
+        const embeddedFeedRoot = resolve(cwd, "submodules/feed");
         const checks: z.infer<typeof checkSchema>[] = [];
 
         const add = (name: string, status: "pass" | "fail" | "blocked", detail: string) =>
           checks.push({ name, status, ok: status === "pass", detail });
         const addBool = (name: string, ok: boolean, detail: string) => add(name, ok ? "pass" : "fail", detail);
         addBool("feed repo", existsSync(resolve(feedRoot, "package.json")), feedRoot);
+        addBool(
+          "embedded feed submodule",
+          existsSync(resolve(embeddedFeedRoot, "package.json")),
+          embeddedFeedRoot,
+        );
+        if (existsSync(resolve(feedRoot, "package.json")) && existsSync(resolve(embeddedFeedRoot, "package.json"))) {
+          const siblingFeed = await gitRef(feedRoot);
+          const embeddedFeed = await gitRef(embeddedFeedRoot);
+          if (!siblingFeed.ok || !embeddedFeed.ok) {
+            add(
+              "feed submodule drift",
+              "blocked",
+              `could not compare git refs: sibling=${siblingFeed.detail || "unknown"} embedded=${
+                embeddedFeed.detail || "unknown"
+              }`,
+            );
+          } else if (siblingFeed.head === embeddedFeed.head) {
+            add("feed submodule drift", "pass", `both feed checkouts are at ${siblingFeed.detail}`);
+          } else {
+            add(
+              "feed submodule drift",
+              "fail",
+              `submodule ${embeddedFeed.detail} at submodules/feed differs from sibling ${siblingFeed.detail} at ${feedRoot}. Smithers dev serves the sibling Feed, while Artifactory dev/check scripts run the submodule. Push/update Feed and then update the submodule pointer.`,
+            );
+          }
+        }
         addBool(
           "feed portless script",
           existsSync(resolve(feedRoot, "node_modules/.bin/portless")),
@@ -177,13 +216,18 @@ export default smithers((ctx) => (
 
         const ok = checks.every((check) => check.status === "pass");
         const blocked = checks.some((check) => check.status === "blocked");
+        const summary = ok
+          ? "Feed HTTPS dev mode is reachable and the local agent endpoint responds."
+          : blocked
+            ? "Feed HTTPS dev mode could not be fully verified because local network probes were blocked by the current sandbox."
+            : "Feed HTTPS dev mode is not fully ready; inspect failed checks before running generation.";
+        console.log(`[feed-dev-mode] ${summary}`);
+        for (const check of checks) {
+          console.log(`[feed-dev-mode] ${check.status.toUpperCase()} ${check.name}: ${check.detail}`);
+        }
         return {
           ok,
-          summary: ok
-            ? "Feed HTTPS dev mode is reachable and the local agent endpoint responds."
-            : blocked
-              ? "Feed HTTPS dev mode could not be fully verified because local network probes were blocked by the current sandbox."
-              : "Feed HTTPS dev mode is not fully ready; inspect failed checks before running generation.",
+          summary,
           checks,
           commands: [
             "cd ../feed && bun run dev",
@@ -194,6 +238,7 @@ export default smithers((ctx) => (
             "Feed reads VITE_AGENT_CONFIG_OVERRIDE=1, VITE_AGENT_HOST, and VITE_AGENT_TOKEN from ../feed/.env.local.",
             "The agent launcher sources DEV_DISTILLERY_ENV or ~/development.nosync/distillery/.env for GEMINI_API_KEY without copying secrets into this repo.",
             "If local listeners are present but Portless routes or endpoint fetches are blocked/failing, the probe may be running inside a restricted sandbox; rerun it outside the sandbox before treating Portless as broken.",
+            "Smithers dev mode serves the sibling Feed checkout, while Artifactory package scripts serve submodules/feed; keep those commits aligned before trusting end-to-end behavior.",
             "Long-term, move Gemini and other API keys into TinyCloud Secret Manager instead of local env files.",
           ],
         };

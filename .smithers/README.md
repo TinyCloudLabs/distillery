@@ -19,6 +19,9 @@ bun run smithers:agent-run:staged
 - Local Artifactory agent at `https://agent.feed.localhost:1355`
 - Local Gemini development env, sourced from `DEV_DISTILLERY_ENV` or
   `~/development.nosync/distillery/.env`
+- Embedded Feed submodule alignment against the sibling `../feed` checkout.
+  This is a readiness check because Smithers dev mode serves `../feed`, while
+  Artifactory package scripts serve `submodules/feed`.
 - Portless route/listener evidence plus endpoint fetches. Endpoint checks can
   report `blocked` when a restricted agent sandbox cannot connect to localhost;
   in that case rerun the workflow outside the sandbox before treating Portless
