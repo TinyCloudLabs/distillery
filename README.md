@@ -217,7 +217,10 @@ skills continuously and decides what happens to their output. It is the
   `/api/*` and `/media/*` gated). It serves the cards, records feedback,
   exposes the preferences panel (`GET/PUT /api/preferences`, ETag-guarded),
   and offers a **Generate** button (`POST /api/generate`) that fires the same
-  feed-run recipe on demand.
+  feed-run recipe on demand. The embedded TinyFeed submodule composes its first
+  page from a bounded newest-first window, keeping the newest artifact first
+  while mixing nearby types/sources/runs so a successful run does not render as
+  a raw cluster of similar cards.
 
 ### The routing seam (in flight)
 
