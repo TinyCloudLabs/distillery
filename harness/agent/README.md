@@ -32,6 +32,9 @@ bounded log tail so a client can detect an in-progress build and show useful
 progress without loading full run scratch state. It also includes the shared
 run-lock summary when the lock exists, so operators can see whether HTTP or a
 Smithers workflow currently owns the runner and whether that lock is reclaimable.
+`GET /agent/info` also exposes non-secret generation readiness, including hero
+image provider state, podcast-audio/TTS provider state, video provider state,
+and the current `AGENT_MEDIA_FOCUS`.
 
 Publish media reporting is sourced from `tc-publish --json`, not from a later
 best-effort reread of the run scratch directory. That means the API media counts

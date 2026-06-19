@@ -116,6 +116,10 @@ async function handleInfo(req: Request): Promise<Response> {
           enabled: imageEnabled,
           reason: imageEnabled ? "image provider configured" : "image provider not configured",
         },
+        audio: {
+          enabled: imageEnabled,
+          reason: imageEnabled ? "Gemini provider configured for TTS" : "Gemini provider not configured",
+        },
         video: {
           enabled: videoProviderConfigured && videoFlagEnabled,
           reason: videoProviderConfigured
