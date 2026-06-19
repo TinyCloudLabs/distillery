@@ -10,6 +10,7 @@ bun run smithers:doctor
 bun run smithers:list
 bun run smithers:ps
 bun run smithers:dev-mode
+bun run smithers:readiness
 bun run smithers:agent-run
 bun run smithers:agent-run:staged
 ```
@@ -36,6 +37,13 @@ bun run smithers:agent-run:staged
   '/Users/.../.portless/proxy.log'`, the current sandbox cannot start the
   Portless proxy. Run the launcher outside the sandbox or approve the
   unsandboxed dev-server command.
+
+`feed-loop-readiness` is the no-spend preflight before a delegated live run. It
+checks pushed Feed/Artifactory state, sibling Feed versus embedded submodule
+alignment, active TinyCloud delegation, stale runner lock state, Gemini/FAL
+media-provider readiness, and the deterministic agent/frontend/Smithers gates.
+It writes a JSON report under `.smithers/reports/` and does not start Claude,
+Gemini, FAL, TinyCloud writes, or `/agent/run`.
 
 Start the two surfaces with:
 

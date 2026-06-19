@@ -196,7 +196,11 @@ skills continuously and decides what happens to their output. It is the
   smoke` sits above individual skills: it verifies ordering/freshness
   backpressure, format diversity, published cap behavior, draft isolation, and
   same-signal dedup so a run remains a good feed rather than a pile of valid
-  artifacts. The live `agent-run` and `agent-run-staged` workflows also accept
+  artifacts. `feed-loop-readiness` is the no-spend preflight for the delegated
+  loop: it checks pushed repo state, Feed submodule alignment, active TinyCloud
+  delegation, stale runner locks, media-provider readiness, and the deterministic
+  agent/frontend/Smithers gates before a live run. The live `agent-run` and
+  `agent-run-staged` workflows also accept
   `{"artifactType":"..."}` (`auto` by default) as a quality-gated generation
   bias for development runs; it nudges skill choice without forcing weak output.
 - **The delegated Feed agent** (`harness/agent/`) — the HTTPS/browser path used
