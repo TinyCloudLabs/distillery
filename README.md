@@ -190,6 +190,11 @@ skills continuously and decides what happens to their output. It is the
   pass) → critic → publish, under a per-run artifact cap. Designed to run
   headless via `claude -p` (subscription-covered reasoning; only Gemini media
   meters, ≈$4/month). See [docs/CORPUS-NAVIGATION-SPEC.md](docs/CORPUS-NAVIGATION-SPEC.md).
+- **The delegated Feed agent** (`harness/agent/`) — the HTTPS/browser path used
+  by TinyFeed. It runs `listen-read → generate → publish` under the user's
+  TinyCloud delegation, logs heartbeats for long child stages, and reports
+  published media from `tc-publish --json` so run status reflects the media keys
+  that actually reached TinyCloud.
 - **The feedback → PREFERENCES.md backpressure loop** — the Folio feed logs
   six revealed-preference actions (`more`, `less`, `save`, `already_knew`,
   `wrong`, plus hide) to `feedback/events.jsonl`; `distill-preferences`
@@ -283,6 +288,21 @@ This starts:
 
 It also wires a matching local `AGENT_API_TOKEN` / `VITE_AGENT_TOKEN` for the
 two processes.
+
+For the OpenKey/WebAuthn path, prefer the Portless HTTPS launcher:
+
+```sh
+AGENT_API_TOKEN=local-claude-dev \
+VITE_AGENT_TOKEN=local-claude-dev \
+PORTLESS_PORT=1355 \
+bun run artifact:dev:https
+```
+
+This starts the embedded Feed submodule at `https://feed.localhost:1355` and the
+local agent at `https://agent.feed.localhost:1355`. The agent uses the restored
+delegation in `~/.tinycloud-agent/tc-home`, runs generation through the local
+Claude CLI session, and publishes to the delegated user's TinyCloud
+`applications` space.
 
 To run the two sides manually:
 

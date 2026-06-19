@@ -16,9 +16,12 @@ see `DEPLOY.md` for the live coordinates and the deploy/redeploy runbook.
 GET  /agent/info             → { did, name, permissions: PermissionEntry[] }            (public)
 POST /agent/delegation       { serialized } → { ok, agentDid, delegationCid, spaceId, expiresAt }   (AUTH)
 POST /agent/run              {} (uses the stored delegation) → { run_id, status:"queued" }           (AUTH)
-GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", startedAt, finishedAt?, published?:[{type,slug}], log?:string[], error? }
-GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?:[{type,slug}], log?:string[], error? }], lock?: { run_id, owner, pid, acquiredAt, ageMs, reclaimable } }   (public)
+GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", startedAt, finishedAt?, published?: PublishedArtifact[], media?: RunMediaSummary, log?:string[], error? }
+GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?: PublishedArtifact[], media?: RunMediaSummary, log?:string[], error? }], lock?: { run_id, owner, pid, acquiredAt, ageMs, reclaimable } }   (public)
 ```
+
+`PublishedArtifact` is `{ type, slug, media?: { heroImage, audio, video } }`.
+`RunMediaSummary` is `{ heroImages, audio, video }`.
 
 `GET /agent/run/:run_id` includes a bounded tail of recent stage log lines, and
 `GET /agent/runs` lists recent runs (newest first, capped at 25) with a smaller
@@ -26,6 +29,11 @@ bounded log tail so a client can detect an in-progress build and show useful
 progress without loading full run scratch state. It also includes the shared
 run-lock summary when the lock exists, so operators can see whether HTTP or a
 Smithers workflow currently owns the runner and whether that lock is reclaimable.
+
+Publish media reporting is sourced from `tc-publish --json`, not from a later
+best-effort reread of the run scratch directory. That means the API media counts
+reflect what the publisher actually wrote to TinyCloud (`heroKey`, `audioKey`,
+`videoKey`) and Feed can show accurate run-history badges such as `3 images`.
 
 Queued/running records are reconciled on read: if the last recorded progress log
 is older than `AGENT_RUN_STALE_MS` (default 20 minutes), the server rewrites the
@@ -182,8 +190,9 @@ run scratch.
    cap, not a quota; fewer artifacts is correct when the material does not clear
    the quality bar. Survivors stay in the run's artifacts dir with an
    adversarial critic + verify-quotes gate.
-3. **publish** — `tc-publish/publish.ts` upserts each survivor to the user's
-   `xyz.tinycloud.artifacts` (KV media + SQL feed row, `approval_status='approved'`).
+3. **publish** — `tc-publish/publish.ts --json` upserts each survivor to the user's
+   `xyz.tinycloud.artifacts` (KV media + SQL feed row, `approval_status='approved'`)
+   and emits the written media keys for run-status observability.
 
 Before publish, the runner preflights optional `hero_image` references. Empty,
 unsafe, missing, or non-image hero files are stripped from `artifact.json` and

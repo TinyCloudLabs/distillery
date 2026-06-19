@@ -67,13 +67,19 @@ Every statement is `CREATE … IF NOT EXISTS`.
 ### 2. Publish an artifact
 
 ```sh
-bun skills/tc-publish/scripts/publish.ts <artifact-dir> [--space applications] [--publisher-did DID]
+bun skills/tc-publish/scripts/publish.ts <artifact-dir> [--space applications] [--publisher-did DID] [--json]
 ```
 
 `<artifact-dir>` is the folder a generation skill wrote
 (`artifacts/<type>/<slug>/`), containing `artifact.json` plus any `hero.<ext>` /
 audio sibling. The publisher DID defaults to the active profile's DID (the
 `publisher_did` audit column); override for tests.
+
+Use `--json` when another process needs machine-readable publish evidence. The
+JSON includes `{ id, type, render_type, slug, heroKey, audioKey, videoKey,
+sqlChanges }`. The delegated agent runner uses this output as the source of
+truth for `GET /agent/run/:id` media summaries, because it describes what was
+actually written to TinyCloud.
 
 ### 3. Verify the round-trip
 
