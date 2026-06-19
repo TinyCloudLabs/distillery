@@ -125,7 +125,7 @@
         commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>386b1a9</code></div>
+        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>submodule edc9967</code></div>
         <div class="pill"><strong>Feed:</strong> 11 commits ahead of origin/main through <code>edc9967</code></div>
         <div class="pill"><strong>Latest functional checkpoint:</strong> Smithers feed-run sees hot-take</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS/build</div>
@@ -300,6 +300,12 @@
             <td>Adds CLI-level regression coverage that <code>--dry-run</code> writes a real run brief naming <code>hot-take</code>, without spawning Claude.</td>
             <td><code>tests/run-generation.test.ts</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">submodule</span></td>
+            <td>Align embedded Feed with sibling checkout</td>
+            <td>Advances <code>submodules/feed</code> from <code>2bda175</code> to <code>edc9967</code>, so Artifactory dev/check uses the same Feed code as the sibling repo.</td>
+            <td><code>submodules/feed</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -390,11 +396,11 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>386b1a9 Cover hot-take in feed-run dry previews</code>.
-        The compact artifact path is now covered at the CLI integration level:
-        a real <code>feed-run.ts --dry-run</code> produces a run brief naming
-        <code>hot-take</code> while proving no Claude/headless generation process
-        was spawned.
+        <code>submodules/feed → edc9967</code>.
+        The embedded Feed used by Artifactory dev/check now matches the sibling
+        Feed checkout, so the Agents UI generation-settings work is visible in
+        both development paths. Push the Feed repo before sharing this Artifactory
+        pointer from a fresh clone.
       </p>
     </section>
 
@@ -410,12 +416,12 @@
         <li><span class="status-ok">Smithers:</span> <code>bun run smithers:list</code></li>
         <li><span class="status-ok">Smithers:</span> <code>bun run smithers:doctor</code></li>
         <li><span class="status-ok">Smithers:</span> <code>cd .smithers &amp;&amp; bun run typecheck</code></li>
-        <li><span class="status-ok">Smithers:</span> <code>bun run smithers:dev-mode</code> logs <code>FAIL feed submodule drift</code> for submodule <code>2bda175</code> versus sibling <code>edc9967</code>, and marks localhost probes <code>BLOCKED</code> under the current sandbox.</li>
+        <li><span class="status-ok">Smithers:</span> <code>bun run smithers:dev-mode</code> logs <code>PASS feed submodule drift</code>: both Feed checkouts are at <code>edc9967</code>; localhost probes remain <code>BLOCKED</code> under the current sandbox.</li>
         <li><span class="status-ok">Feed:</span> <code>bun run typecheck</code></li>
         <li><span class="status-ok">Feed:</span> <code>bun run build</code></li>
         <li><span class="status-ok">Feed:</span> <code>edc9967</code> consumes Artifactory's optional <code>/agent/info.generation</code> block and surfaces target artifacts, transcript count, and model in Agents details.</li>
-        <li><span class="status-ok">Artifactory embedded Feed:</span> <code>bun run artifact:frontend:check</code> passed and warned that submodule <code>2bda175</code> differs from sibling <code>edc9967</code>.</li>
-        <li><span class="status-ok">Artifactory embedded Feed:</span> <code>ARTIFACT_FEED_DRIFT=strict bash scripts/artifact-feed-check.sh</code> failed before build, as intended.</li>
+        <li><span class="status-ok">Artifactory embedded Feed:</span> <code>bun run artifact:frontend:check</code> passed with submodule and sibling Feed both at <code>edc9967</code>.</li>
+        <li><span class="status-ok">Artifactory embedded Feed:</span> <code>ARTIFACT_FEED_DRIFT=strict bash scripts/artifact-feed-check.sh</code> passed.</li>
         <li><span class="status-ok">Staged agent run:</span> <code>bun run smithers:agent-run:staged</code> completed in 8m59s and published <code>article/it-built-it-didn-t-ship-and-nobody-could-see-why</code>; it held <code>social-post/enqueue-time-timeout-kills-the-tail-of-your-queue</code> for approval.</li>
         <li><span class="status-ok">Staged agent run:</span> <code>run-1781835553692-2cjnp6</code> completed in 6m26s with target 3 and published <code>article/the-demo-house-nobody-can-move-into</code>, <code>insight-card/desperation-is-the-real-dilution-the-runway-first-fundraising-sp</code>, and <code>insight-card/the-permission-slip-is-public-only-the-key-is-secret</code>.</li>
         <li><span class="status-ok">TinyCloud feed table:</span> direct delegated <code>tc sql query</code> returned 2 newest article rows in <code>xyz.tinycloud.artifacts/feed</code>: <code>it-built-it-didn-t-ship-and-nobody-could-see-why</code> and <code>the-checks-kept-passing-nothing-shipped</code>.</li>
