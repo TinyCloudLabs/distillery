@@ -125,10 +125,10 @@
         commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>cb9c1ee</code></div>
+        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>ca9fd7a</code></div>
         <div class="pill"><strong>Feed:</strong> 10 commits ahead of origin/main through <code>2065564</code></div>
-        <div class="pill"><strong>Latest functional checkpoint:</strong> Feed reports missing run lock endpoint</div>
-        <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS</div>
+        <div class="pill"><strong>Latest functional checkpoint:</strong> Artifactory warns on Feed submodule drift</div>
+        <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS/build</div>
       </div>
     </header>
 
@@ -252,6 +252,12 @@
             <td>Adds a shared lock summary to <code>GET /agent/runs</code> so operators can see the lock owner, age, and reclaimability without shell access.</td>
             <td><code>harness/agent/src/runs.ts</code>, <code>harness/agent/src/server.ts</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">ca9fd7a</span></td>
+            <td>Warn on Feed submodule drift</td>
+            <td>Surfaces when Artifactory dev/check scripts are using a vendored Feed commit that differs from the sibling Feed checkout, with strict mode for CI/backpressure.</td>
+            <td><code>scripts/artifact-lib.sh</code>, <code>scripts/artifact-feed-check.sh</code>, <code>README.md</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -336,10 +342,11 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>2065564 Report missing run lock endpoint</code>.
-        Feed still soft-degrades cold-start run detection for older backends, but
-        the operator-facing Run lock section now reports missing routes and
-        network failures instead of rendering them as no active lock.
+        <code>ca9fd7a Warn on Feed submodule drift</code>.
+        Artifactory currently runs its vendored Feed submodule at
+        <code>2bda175</code>, while the sibling Feed repo is at
+        <code>2065564</code>. The dev scripts now report that mismatch so
+        local Feed work is not mistaken for embedded Artifactory/Feed behavior.
       </p>
     </section>
 
@@ -352,6 +359,8 @@
         <li><span class="status-ok">Smithers:</span> <code>bun run smithers:doctor</code></li>
         <li><span class="status-ok">Feed:</span> <code>bun run typecheck</code></li>
         <li><span class="status-ok">Feed:</span> <code>bun run build</code></li>
+        <li><span class="status-ok">Artifactory embedded Feed:</span> <code>bun run artifact:frontend:check</code> passed and warned that submodule <code>2bda175</code> differs from sibling <code>2065564</code>.</li>
+        <li><span class="status-ok">Artifactory embedded Feed:</span> <code>ARTIFACT_FEED_DRIFT=strict bash scripts/artifact-feed-check.sh</code> failed before build, as intended.</li>
         <li><span class="status-ok">Stale run cleanup:</span> <code>run-1781811131857-3r6pbz</code> is now <code>error</code>, not <code>running</code>.</li>
       </ul>
     </section>
