@@ -13,11 +13,19 @@
 // inherit profile/default-space/session state with zero SDK wiring.
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const AGENT_PACKAGE_TC = resolve(REPO_ROOT, "harness/agent/node_modules/.bin/tc");
+const AGENT_PACKAGE_NODE_SDK = resolve(
+  REPO_ROOT,
+  "harness/agent/node_modules/@tinycloud/node-sdk/dist/index.js",
+);
+const DEFAULT_HOST = "https://node.tinycloud.xyz";
+export const KV_PUT_ARG_VALUE_MAX_BYTES = 96 * 1024;
 
 // The CLI on PATH (`tc`) can be an OLD published @tinycloud/cli that lacks
 // delegation/space fixes the agent needs. Prefer the agent package's pinned CLI,
@@ -205,6 +213,233 @@ export interface KvTarget {
   space?: string;
 }
 
+interface StoredProfile {
+  name?: string;
+  host?: string;
+  privateKey?: string;
+  authMethod?: string;
+  defaultSpace?: string;
+  did?: string;
+  sessionDid?: string;
+  ownerDid?: string;
+  address?: string;
+  chainId?: number;
+}
+
+interface StoredSession {
+  delegationHeader?: { Authorization: string };
+  delegationCid?: string;
+  spaceId?: string;
+  jwk?: object;
+  verificationMethod?: string;
+  address?: string;
+  chainId?: number;
+  siwe?: unknown;
+  signature?: unknown;
+}
+
+interface StoredTcContext {
+  home: string;
+  profileName: string;
+  host: string;
+  profile: StoredProfile;
+  session: StoredSession | null;
+}
+
+type TinyCloudNodeSdk = {
+  TinyCloudNode: new (options: { host: string }) => {
+    restoreSession(sessionData: Record<string, unknown>): Promise<void>;
+    kv: {
+      put(key: string, value: string): Promise<{ ok: boolean; error?: unknown }>;
+    };
+    kvForSpace(spaceId: string): {
+      put(key: string, value: string): Promise<{ ok: boolean; error?: unknown }>;
+    };
+  };
+};
+
+function readJsonFile<T>(path: string): T | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+function envFor(opts: TcRunOptions): NodeJS.ProcessEnv {
+  return { ...process.env, ...opts.env };
+}
+
+function tcConfigDir(home: string): string {
+  return resolve(home, ".tinycloud");
+}
+
+function profileDir(home: string, name: string): string {
+  return resolve(tcConfigDir(home), "profiles", name);
+}
+
+function canonicalizeAddress(address: string): string {
+  const trimmed = address.trim();
+  return trimmed.startsWith("0x")
+    ? `0x${trimmed.slice(2).toLowerCase()}`
+    : trimmed.toLowerCase();
+}
+
+function parsePkhDid(did: string | undefined): { chainId: number; address: string } | null {
+  if (!did) return null;
+  const match = did.match(/^did:pkh:eip155:(\d+):(0x[a-fA-F0-9]{40})$/);
+  if (!match) return null;
+  return { chainId: Number(match[1]), address: canonicalizeAddress(match[2]!) };
+}
+
+function makePkhSpaceId(address: string, chainId: number, name: string): string {
+  return `tinycloud:pkh:eip155:${chainId}:${canonicalizeAddress(address)}:${name}`;
+}
+
+function parseSpaceUri(input: string): { owner: string; name: string } | null {
+  if (!input.startsWith("tinycloud:")) return null;
+  const parts = input.split(":");
+  if (parts.length < 3) return null;
+  const name = parts.at(-1);
+  if (!name) return null;
+  return { owner: parts.slice(1, -1).join(":"), name };
+}
+
+function resolveAddress(profile: StoredProfile, session: StoredSession | null): string {
+  if (typeof session?.address === "string" && session.address.length > 0) {
+    return canonicalizeAddress(session.address);
+  }
+  if (typeof profile.address === "string" && profile.address.length > 0) {
+    return canonicalizeAddress(profile.address);
+  }
+  const fromOwnerDid = parsePkhDid(profile.ownerDid);
+  if (fromOwnerDid) return fromOwnerDid.address;
+  throw new Error(`Cannot determine Ethereum address for profile "${profile.name ?? "default"}".`);
+}
+
+function resolveChainId(profile: StoredProfile, session: StoredSession | null): number {
+  if (typeof session?.chainId === "number" && Number.isFinite(session.chainId)) {
+    return session.chainId;
+  }
+  if (typeof profile.chainId === "number" && Number.isFinite(profile.chainId)) {
+    return profile.chainId;
+  }
+  const fromOwnerDid = parsePkhDid(profile.ownerDid);
+  if (fromOwnerDid) return fromOwnerDid.chainId;
+  throw new Error(`Cannot determine chain id for profile "${profile.name ?? "default"}".`);
+}
+
+export function resolveTcProfileContext(opts: TcRunOptions = {}): StoredTcContext {
+  const env = envFor(opts);
+  const home = env.HOME || homedir();
+  const config = readJsonFile<{ defaultProfile?: string }>(
+    resolve(tcConfigDir(home), "config.json"),
+  );
+  const profileName = opts.profile ?? env.TC_PROFILE ?? config?.defaultProfile ?? "default";
+  const dir = profileDir(home, profileName);
+  const profile = readJsonFile<StoredProfile>(resolve(dir, "profile.json"));
+  if (!profile) {
+    throw new Error(`TinyCloud profile "${profileName}" not found under ${tcConfigDir(home)}.`);
+  }
+  const session = readJsonFile<StoredSession>(resolve(dir, "session.json"));
+  return {
+    home,
+    profileName,
+    host: env.TC_HOST ?? profile.host ?? DEFAULT_HOST,
+    profile: { ...profile, name: profile.name ?? profileName },
+    session,
+  };
+}
+
+export function resolveTcSpaceUri(
+  input: string | undefined,
+  ctx: Pick<StoredTcContext, "profile" | "session" | "profileName">,
+): string | undefined {
+  const effective = input || ctx.profile.defaultSpace;
+  if (!effective) return undefined;
+  if (effective.startsWith("tinycloud:")) {
+    const parsed = parseSpaceUri(effective);
+    if (!parsed) {
+      throw new Error(`Invalid TinyCloud space URI "${effective}".`);
+    }
+    return `tinycloud:${parsed.owner}:${parsed.name}`;
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(effective)) {
+    throw new Error(`Invalid TinyCloud space "${effective}".`);
+  }
+  const address = resolveAddress(ctx.profile, ctx.session);
+  const chainId = resolveChainId(ctx.profile, ctx.session);
+  return makePkhSpaceId(address, chainId, effective);
+}
+
+export function shouldUseSdkKvPut(value: string): boolean {
+  return Buffer.byteLength(value, "utf8") > KV_PUT_ARG_VALUE_MAX_BYTES;
+}
+
+async function loadNodeSdk(): Promise<TinyCloudNodeSdk> {
+  const override = process.env.NODE_SDK_DIST?.trim();
+  const path = override || AGENT_PACKAGE_NODE_SDK;
+  if (!existsSync(path)) {
+    throw new Error(
+      `@tinycloud/node-sdk dist not found at ${path}. Run 'bun install' in harness/agent ` +
+        `or set NODE_SDK_DIST to a built dist/index.js.`,
+    );
+  }
+  return (await import(pathToFileURL(path).href)) as TinyCloudNodeSdk;
+}
+
+function sdkErrorToTc(error: unknown, argv: readonly string[]): TcCliError {
+  const candidate = error as { code?: unknown; message?: unknown; hint?: unknown };
+  return new TcCliError(
+    {
+      code: typeof candidate?.code === "string" ? candidate.code : "KV_WRITE_FAILED",
+      message:
+        typeof candidate?.message === "string"
+          ? candidate.message
+          : `TinyCloud KV put failed: ${String(error)}`,
+      hint: typeof candidate?.hint === "string" ? candidate.hint : undefined,
+    },
+    argv,
+    1,
+  );
+}
+
+async function kvPutStringViaSdk(
+  key: string,
+  value: string,
+  target: KvTarget = {},
+  opts: TcRunOptions = {},
+): Promise<{ key: string; written: boolean }> {
+  const ctx = resolveTcProfileContext(opts);
+  if (!ctx.session?.delegationHeader || !ctx.session.delegationCid || !ctx.session.spaceId) {
+    throw new Error(`TinyCloud profile "${ctx.profileName}" has no restorable delegated session.`);
+  }
+  const sdk = await loadNodeSdk();
+  const node = new sdk.TinyCloudNode({ host: ctx.host });
+  await node.restoreSession({
+    delegationHeader: ctx.session.delegationHeader,
+    delegationCid: ctx.session.delegationCid,
+    spaceId: ctx.session.spaceId,
+    jwk: ctx.session.jwk,
+    verificationMethod: ctx.session.verificationMethod ?? ctx.profile.did,
+    address: ctx.session.address,
+    chainId: ctx.session.chainId,
+    siwe: ctx.session.siwe,
+    signature: ctx.session.signature,
+  });
+
+  const spaceUri = resolveTcSpaceUri(target.space, ctx);
+  const kv = spaceUri ? node.kvForSpace(spaceUri) : node.kv;
+  const result = await kv.put(key, value);
+  if (!result.ok) {
+    throw sdkErrorToTc(
+      result.error,
+      ["kv", "put", key, "<sdk-string>", ...(target.space ? ["--space", target.space] : [])],
+    );
+  }
+  return { key, written: true };
+}
+
 /** Put a raw string value at `key` (JSON-parsed by tc, falling back to string). */
 export function kvPut(
   key: string,
@@ -229,7 +464,13 @@ export async function kvPutBytes(
 ): Promise<{ key: string; written: boolean }> {
   const key = baseKey.endsWith(".b64") ? baseKey : `${baseKey}.b64`;
   const b64 = Buffer.from(bytes).toString("base64");
-  const res = await kvPut(key, b64, target, opts);
+  // Keep small writes on the CLI path. For generated images/audio/video the
+  // base64 payload can exceed posix_spawn's argv limit; `tc kv put --stdin` and
+  // `--file` currently pass Buffers, not strings, so use the SDK restored from
+  // the same delegated tc profile to preserve the `.b64` string contract.
+  const res = shouldUseSdkKvPut(b64)
+    ? await kvPutStringViaSdk(key, b64, target, opts)
+    : await kvPut(key, b64, target, opts);
   return { key, written: res.written };
 }
 
