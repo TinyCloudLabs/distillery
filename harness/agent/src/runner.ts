@@ -349,9 +349,9 @@ export async function runGenerateStage(
   ctx: PipelineContext,
   transcripts: string[],
 ): Promise<void> {
-  // GENERATE — headless claude over the corpus → tweet + article into the per-run
-  // artifacts dir. Mirrors harness/feed-run's run-generation recipe.
-  ctx.step("generate: distilling tweet + article from the corpus");
+  // GENERATE — headless claude over the corpus → publishable Feed artifact first,
+  // optional approval-held outward draft second.
+  ctx.step("generate: distilling publishable feed artifact from the corpus");
   // SCRUBBED env + minimal HOME (only a ~/.claude symlink): claude reads its own
   // credentials and writes artifact files locally, but a prompt-injected
   // transcript can't reach ~/.tinycloud, the agent state, env secrets, or `tc`.
@@ -416,7 +416,7 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
 }
 
 /** Build the `claude -p` argv for the generation step (feed-run recipe, scoped). */
-function buildGenerationArgs(
+export function buildGenerationArgs(
   corpusDir: string,
   artifactsDir: string,
   transcripts: string[],
@@ -455,18 +455,22 @@ function buildGenerationArgs(
     "the harness publishes ONLY what lands under that dir — a save without that",
     "flag goes to the repo default and is NOT published).",
     "1. Read the transcript files listed above.",
-    "2. TWEET (banger-extractor → social-post): run survey.ts on the transcripts →",
-    "   pick the single most non-obvious EARNED SECRET actually said → climb the",
-    "   abstraction ladder + 4-question safety test → scrub-check → verify-quotes",
-    "   --stamp →  bun skills/banger-extractor/scripts/save.ts <artifact.json> " +
+    "2. PUBLISHABLE FEED ARTIFACT FIRST (write-article): draft a contract-valid",
+    "   article (non-empty body, >=1 verified quote) → verify-quotes --stamp →",
+    "   leave hero_image unset unless you successfully run illustrate-card/Gemini",
+    "   and have a real local image file in the artifact dir. Do not create",
+    "   placeholder/fallback graphics. Then: ",
+    "   bun skills/write-article/scripts/save.ts <artifact.json> " +
       `--out-dir ${artifactsDir}`,
-    "   Aim for one; zero is valid ONLY if no line genuinely clears the bar.",
-    "3. ARTICLE (write-article): draft a contract-valid article (non-empty body,",
-    "   >=1 verified quote) → verify-quotes --stamp → leave hero_image unset",
-    "   unless you successfully run illustrate-card/Gemini and have a real local",
-    "   image file in the artifact dir. Do not create placeholder/fallback",
-    "   graphics. Then: bun skills/write-article/scripts/save.ts <artifact.json> " +
+    "   This is the primary deliverable because the Feed only shows publishable",
+    "   internal artifacts; do not spend the run only on approval-held drafts.",
+    "3. OPTIONAL OUTWARD DRAFT (banger-extractor → social-post): only after the",
+    "   article exists, run survey.ts on the transcripts → pick the single most",
+    "   non-obvious EARNED SECRET actually said → climb the abstraction ladder +",
+    "   4-question safety test → scrub-check → verify-quotes --stamp →",
+    "   bun skills/banger-extractor/scripts/save.ts <artifact.json> " +
       `--out-dir ${artifactsDir}`,
+    "   Zero is valid. Social posts are held for approval and will not fill Feed.",
     ...videoStep,
     "   AND a security reviewer — non-obvious value, leak-safe, no AI-slop, every",
     "   claim anchored to a VERIFIED verbatim quote. DELETE (rm -rf its dir under",
@@ -481,8 +485,9 @@ function buildGenerationArgs(
   ].join("\n");
 
   const user =
-    `Distill the ${transcripts.length} transcript(s) in ${corpusDir} into one tweet ` +
-    `and one article${videoEnabled ? ", plus at most one excellent clip if justified" : ""}, ` +
+    `Distill the ${transcripts.length} transcript(s) in ${corpusDir} into one publishable article ` +
+    `for the Feed, then optionally one approval-held social-post draft` +
+    `${videoEnabled ? ", plus at most one excellent clip if justified" : ""}, ` +
     `save the survivors under ${artifactsDir} (do NOT publish), ` +
     `then print a one-line summary.`;
 

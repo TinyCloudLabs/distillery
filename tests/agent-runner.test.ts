@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { classifyListenReadResult } from "../harness/agent/src/listen-read-outcome.ts";
 import { canReclaimRunLock, reconcileStaleRun, summarizeRunLock } from "../harness/agent/src/runs.ts";
 import {
+  buildGenerationArgs,
   createPipelineContext,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
@@ -118,6 +119,24 @@ describe("agent runner pipeline context", () => {
   });
 });
 
+describe("agent runner generation prompt", () => {
+  test("prioritizes a publishable Feed artifact before approval-held drafts", () => {
+    const args = buildGenerationArgs("/tmp/corpus", "/tmp/artifacts", ["/tmp/corpus/demo.md"]);
+    const systemPrompt = String(args[args.indexOf("--system-prompt") + 1]);
+    const userPrompt = String(args[args.indexOf("-p") + 1]);
+
+    const articleIndex = systemPrompt.indexOf("PUBLISHABLE FEED ARTIFACT FIRST");
+    const draftIndex = systemPrompt.indexOf("OPTIONAL OUTWARD DRAFT");
+
+    expect(articleIndex).toBeGreaterThan(-1);
+    expect(draftIndex).toBeGreaterThan(-1);
+    expect(articleIndex).toBeLessThan(draftIndex);
+    expect(systemPrompt).toContain("Social posts are held for approval and will not fill Feed");
+    expect(userPrompt).toContain("one publishable article for the Feed");
+    expect(userPrompt).toContain("optionally one approval-held social-post draft");
+  });
+});
+
 describe("agent run stale-state reconciliation", () => {
   function runState(overrides: Partial<RunState> = {}): RunState {
     return {
@@ -125,7 +144,7 @@ describe("agent run stale-state reconciliation", () => {
       status: "running",
       published: [],
       startedAt: Date.parse("2026-06-18T19:32:11.857Z"),
-      log: ["2026-06-18T19:32:16.704Z generate: distilling tweet + article from the corpus"],
+      log: ["2026-06-18T19:32:16.704Z generate: distilling publishable feed artifact from the corpus"],
       ...overrides,
     };
   }
@@ -146,7 +165,7 @@ describe("agent run stale-state reconciliation", () => {
     const { state, changed } = reconcileStaleRun(
       runState({
         log: [
-          "2026-06-18T19:32:16.704Z generate: distilling tweet + article from the corpus",
+          "2026-06-18T19:32:16.704Z generate: distilling publishable feed artifact from the corpus",
           "2026-06-18T19:39:56.704Z generate: still running (1 artifact dir(s) currently on disk)",
         ],
       }),

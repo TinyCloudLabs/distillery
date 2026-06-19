@@ -167,10 +167,12 @@ from a genuinely stale run.
 1. **listen-read** — `tc-listen-read/listen-read.ts` pulls the user's Listen
    transcripts into the run's corpus. **Empty-Listen-safe:** 0 transcripts →
    the run completes with 0 artifacts (valid), skipping generate + publish.
-2. **generate** — headless `claude -p` distills one tweet (banger-extractor) and
-   one article (write-article, optionally illustrated by Gemini/illustrate-card)
-   into the run's artifacts dir, with an adversarial critic + verify-quotes gate
-   (no human approval, per §9).
+2. **generate** — headless `claude -p` distills one publishable Feed article
+   first (write-article, optionally illustrated by Gemini/illustrate-card), then
+   may create one approval-held social-post draft (banger-extractor) if the
+   material earns it. This ordering is load-bearing: held outward drafts do not
+   fill the Feed, so the visible Feed artifact comes first. Survivors stay in
+   the run's artifacts dir with an adversarial critic + verify-quotes gate.
 3. **publish** — `tc-publish/publish.ts` upserts each survivor to the user's
    `xyz.tinycloud.artifacts` (KV media + SQL feed row, `approval_status='approved'`).
 
