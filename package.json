@@ -7,6 +7,7 @@
   "scripts": {
     "artifact:inflate": "bash scripts/artifact-inflate.sh",
     "artifact:dev": "bash scripts/artifact-dev.sh",
+    "artifact:dev:https": "bash scripts/artifact-dev-https.sh",
     "artifact:frontend": "bash scripts/artifact-feed-dev.sh",
     "artifact:frontend:check": "bash scripts/artifact-feed-check.sh",
     "artifact:backend": "bash scripts/artifact-distillery-backend.sh",

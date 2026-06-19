@@ -222,6 +222,22 @@ bun run smithers:agent-run
 bun run smithers:agent-run:staged
 ```
 
+For the local HTTPS browser loop, prefer the one-command Portless launcher:
+
+```sh
+PORTLESS_PORT=1355 bun run artifact:dev:https
+```
+
+It starts the embedded Feed submodule at `https://feed.localhost:1355` and the
+local agent at `https://agent.feed.localhost:1355`, with a shared local bearer
+token and `VITE_AGENT_CONFIG_OVERRIDE=1` so Feed ignores the committed production
+agent config during Vite dev.
+
+If Portless fails with `EPERM` on `~/.portless/proxy.log`, the current sandbox
+cannot write Portless proxy state. Start this command outside the sandbox or
+approve the unsandboxed local dev-server command, then rerun
+`bun run smithers:dev-mode` to verify the routes.
+
 `smithers:agent-run:staged` is the first stage-level orchestration path:
 `preflight → listen → generate → publish → cleanup`. It remains an operator/dev
 entry point until the HTTP endpoint delegates to Smithers task execution safely;

@@ -28,7 +28,7 @@ ensure_feed_submodule() {
 ensure_feed_deps() {
   local root="$1"
   ensure_feed_submodule "$root"
-  if [ ! -d "$root/submodules/feed/node_modules" ]; then
+  if [ ! -d "$root/submodules/feed/node_modules" ] || [ ! -x "$root/submodules/feed/node_modules/.bin/portless" ]; then
     (cd "$root/submodules/feed" && bun install)
   fi
 }

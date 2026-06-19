@@ -4,9 +4,10 @@
 // smithers-description: Probe the HTTPS Feed plus local Artifactory agent development setup.
 // smithers-tags: dev, feed, observability
 /** @jsxImportSource smithers-orchestrator */
-import { existsSync } from "node:fs";
+import { W_OK } from "node:constants";
+import { accessSync, existsSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod/v4";
@@ -74,6 +75,26 @@ function hasLocalDevListeners(listenerLines: string): boolean {
   return /:1355\b/.test(listenerLines) && /:4\d{3}\b/.test(listenerLines);
 }
 
+function writablePath(path: string): { ok: boolean; detail: string } {
+  if (!existsSync(path)) {
+    const parent = dirname(path);
+    try {
+      accessSync(parent, W_OK);
+      return { ok: true, detail: `${path} does not exist yet; ${parent} is writable so Portless can create it.` };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, detail: `${path} does not exist and ${parent} is not writable: ${message}` };
+    }
+  }
+  try {
+    accessSync(path, W_OK);
+    return { ok: true, detail: `${path} is writable` };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, detail: `${path} is not writable from this process: ${message}` };
+  }
+}
+
 async function curlOk(url: string): Promise<{ status: "pass" | "fail" | "blocked"; ok: boolean; detail: string }> {
   try {
     const res = await execFileAsync("curl", ["-k", "-sS", "-m", "4", url], { timeout: 5_000 });
@@ -117,6 +138,8 @@ export default smithers((ctx) => (
         const feedRoot = resolve(cwd, feedRootInput);
         const devEnv = expandHome(devEnvInput);
         const embeddedFeedRoot = resolve(cwd, "submodules/feed");
+        const portlessDir = expandHome("~/.portless");
+        const portlessLog = resolve(portlessDir, "proxy.log");
         const checks: z.infer<typeof checkSchema>[] = [];
 
         const add = (name: string, status: "pass" | "fail" | "blocked", detail: string) =>
@@ -160,6 +183,13 @@ export default smithers((ctx) => (
           "scripts/artifact-agent-dev-https.sh",
         );
         addBool("local Gemini env", existsSync(devEnv), `${devEnv} (${existsSync(devEnv) ? "present" : "missing"})`);
+        const portlessDirWritable = writablePath(portlessDir);
+        const portlessLogWritable = existsSync(portlessLog) ? writablePath(portlessLog) : portlessDirWritable;
+        add(
+          "portless state",
+          portlessDirWritable.ok && portlessLogWritable.ok ? "pass" : "blocked",
+          `${portlessDirWritable.detail}; ${portlessLogWritable.detail}`,
+        );
 
         const listeners = await runCapture("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]);
         const listenerLines = listeners.detail
@@ -230,13 +260,16 @@ export default smithers((ctx) => (
           summary,
           checks,
           commands: [
-            "cd ../feed && bun run dev",
+            "PORTLESS_PORT=1355 bun run artifact:dev:https",
+            "cd ../feed && PORTLESS_PORT=1355 VITE_AGENT_CONFIG_OVERRIDE=1 VITE_AGENT_HOST=https://agent.feed.localhost:1355 VITE_AGENT_TOKEN=local-claude-dev bun run dev",
             "AGENT_API_TOKEN=local-claude-dev PORTLESS_PORT=1355 bun run artifact:agent:dev:https",
             "bunx smithers-orchestrator workflow run feed-dev-mode",
           ],
           notes: [
-            "Feed reads VITE_AGENT_CONFIG_OVERRIDE=1, VITE_AGENT_HOST, and VITE_AGENT_TOKEN from ../feed/.env.local.",
+            "`bun run artifact:dev:https` is the preferred one-command local setup: embedded Feed + local agent behind Portless with a shared token.",
+            "Feed reads VITE_AGENT_CONFIG_OVERRIDE=1, VITE_AGENT_HOST, and VITE_AGENT_TOKEN from the dev process environment.",
             "The agent launcher sources DEV_DISTILLERY_ENV or ~/development.nosync/distillery/.env for GEMINI_API_KEY without copying secrets into this repo.",
+            "If Portless reports `EPERM` for ~/.portless/proxy.log, run the launcher outside the sandbox or approve the unsandboxed local dev-server command.",
             "If local listeners are present but Portless routes or endpoint fetches are blocked/failing, the probe may be running inside a restricted sandbox; rerun it outside the sandbox before treating Portless as broken.",
             "Smithers dev mode serves the sibling Feed checkout, while Artifactory package scripts serve submodules/feed; keep those commits aligned before trusting end-to-end behavior.",
             "Long-term, move Gemini and other API keys into TinyCloud Secret Manager instead of local env files.",

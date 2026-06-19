@@ -27,12 +27,27 @@ bun run smithers:agent-run:staged
   report `blocked` when a restricted agent sandbox cannot connect to localhost;
   in that case rerun the workflow outside the sandbox before treating Portless
   as broken.
+- Portless state writability for `~/.portless` and `~/.portless/proxy.log`.
+  If the launcher fails with `EPERM: operation not permitted, open
+  '/Users/.../.portless/proxy.log'`, the current sandbox cannot start the
+  Portless proxy. Run the launcher outside the sandbox or approve the
+  unsandboxed dev-server command.
 
 Start the two surfaces with:
 
 ```sh
-cd ../feed && PORTLESS_PORT=1355 bun run dev
-cd ../artifactory && AGENT_API_TOKEN=local-claude-dev PORTLESS_PORT=1355 bun run artifact:agent:dev:https
+PORTLESS_PORT=1355 bun run artifact:dev:https
+```
+
+That command starts the embedded Feed submodule and the local Artifactory agent
+behind Portless, sets `VITE_AGENT_CONFIG_OVERRIDE=1`, points Feed at
+`https://agent.feed.localhost:1355`, and shares one local bearer token between
+the browser bundle and agent backend. For split-terminal debugging, run the two
+commands separately:
+
+```sh
+cd submodules/feed && PORTLESS_PORT=1355 VITE_AGENT_CONFIG_OVERRIDE=1 VITE_AGENT_HOST=https://agent.feed.localhost:1355 VITE_AGENT_TOKEN=local-claude-dev bun run dev
+AGENT_API_TOKEN=local-claude-dev PORTLESS_PORT=1355 bun run artifact:agent:dev:https
 ```
 
 `agent-run` is the first workflow bridge for the real transcript-to-artifact
