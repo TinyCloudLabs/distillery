@@ -125,7 +125,7 @@
         commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>cf16fea</code></div>
+        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>386b1a9</code></div>
         <div class="pill"><strong>Feed:</strong> 10 commits ahead of origin/main through <code>2065564</code></div>
         <div class="pill"><strong>Latest functional checkpoint:</strong> Smithers feed-run sees hot-take</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS/build</div>
@@ -294,6 +294,12 @@
             <td>Makes the Smithers/feed-run runbook, generated brief, and headless generation prompt name <code>hot-take</code> as the compact internal artifact path.</td>
             <td><code>harness/feed-run/</code>, <code>tests/run-generation.test.ts</code>, <code>tests/feed-run-miners.test.ts</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">386b1a9</span></td>
+            <td>Cover hot-take in feed-run dry previews</td>
+            <td>Adds CLI-level regression coverage that <code>--dry-run</code> writes a real run brief naming <code>hot-take</code>, without spawning Claude.</td>
+            <td><code>tests/run-generation.test.ts</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -378,11 +384,11 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>cf16fea Align feed-run prompts with hot-take skill</code>.
-        The compact artifact path is now visible in both agent surfaces: the
-        HTTP/staged agent prompt and the Smithers/feed-run runbook plus generated
-        brief. Hot takes still save as <code>insight-card</code>, so Feed keeps
-        the same renderer and TinyCloud schema.
+        <code>386b1a9 Cover hot-take in feed-run dry previews</code>.
+        The compact artifact path is now covered at the CLI integration level:
+        a real <code>feed-run.ts --dry-run</code> produces a run brief naming
+        <code>hot-take</code> while proving no Claude/headless generation process
+        was spawned.
       </p>
     </section>
 
@@ -392,6 +398,7 @@
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/agent-runner.test.ts tests/listen-read-lib.test.ts</code></li>
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/hot-take.test.ts tests/agent-runner.test.ts</code> passed 22 tests, including compactness and outward-draft rejection for hot takes.</li>
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/run-generation.test.ts tests/feed-run-miners.test.ts tests/hot-take.test.ts tests/agent-runner.test.ts</code> passed 77 tests, covering the Smithers/feed-run prompt and brief wiring for <code>hot-take</code>.</li>
+        <li><span class="status-ok">Artifactory CLI dry-run:</span> <code>feed-run.ts --dry-run</code> against fixture transcripts produced <code>/tmp/artifactory-feedrun-smoke.aO1OzZ/runs/smoke-hot-take-brief/run-brief.md</code> with <code>hot-take + extract-insights / write-article / make-podcast / write-digest</code> and skipped generation/publish.</li>
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/agent-runner.test.ts</code> includes prompt-order, publishable-target, and generation-visibility regression checks.</li>
         <li><span class="status-ok">Artifactory:</span> <code>bun run typecheck</code></li>
         <li><span class="status-ok">Smithers:</span> <code>bun run smithers:list</code></li>
