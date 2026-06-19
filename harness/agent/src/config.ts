@@ -83,6 +83,15 @@ function canonicalize(absPath: string): string {
   }
 }
 
+function mediaFocusEnv(value = process.env.AGENT_MEDIA_FOCUS): "balanced" | "podcast" | "video" {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized || normalized === "balanced") return "balanced";
+  if (normalized === "podcast" || normalized === "video") return normalized;
+  throw new Error(
+    `agent config: AGENT_MEDIA_FOCUS must be one of balanced, podcast, video (got '${value}')`,
+  );
+}
+
 /**
  * Fail FAST at boot on an unsafe path layout. A pathological override (e.g.
  * AGENT_RUNS_DIR=$AGENT_STATE_DIR/runs, an in-repo / relative path, or a SYMLINK
@@ -194,6 +203,8 @@ export const config = {
   transcriptCount: Number(process.env.AGENT_TRANSCRIPT_COUNT ?? 5),
   /** Target number of publishable, Feed-visible artifacts per run. */
   targetArtifacts: positiveIntegerEnv("AGENT_TARGET_ARTIFACTS", 3),
+  /** Optional dev/operator posture for proving richer media paths. */
+  mediaFocus: mediaFocusEnv(),
   /** Generation model for the headless `claude -p` step. */
   genModel: process.env.AGENT_GEN_MODEL ?? "opus",
   /** How often long-running child stages append progress logs. */

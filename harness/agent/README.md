@@ -116,6 +116,7 @@ Env (all optional):
 | `AGENT_NAME` | `Distillery Agent` | advertised in `/agent/info` |
 | `AGENT_TRANSCRIPT_COUNT` | `5` | Listen transcripts pulled per run |
 | `AGENT_TARGET_ARTIFACTS` | `3` | target number of publishable, Feed-visible artifacts per run; quality can produce fewer |
+| `AGENT_MEDIA_FOCUS` | `balanced` | `balanced`, `podcast`, or `video`; dev/operator posture for proving richer media paths without forcing low-quality artifacts |
 | `AGENT_GEN_MODEL` | `opus` | model for the headless `claude -p` generate step |
 | `AGENT_GENERATE_PATH` | `~/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` | PATH for the scrubbed-env generate child (needs `bun` + `claude`) |
 | `NODE_SDK_DIST` | (built js-sdk checkout) | override the `@tinycloud/node-sdk` dist path |
@@ -195,6 +196,12 @@ run scratch.
    cap, not a quota; fewer artifacts is correct when the material does not clear
    the quality bar. Survivors stay in the run's artifacts dir with an
    adversarial critic + verify-quotes gate.
+   `AGENT_MEDIA_FOCUS=podcast` makes the generator try to prove one real
+   `make-podcast` audio artifact before filling the rest of the run, but only if
+   a sustained through-line clears the podcast bar and Gemini TTS is configured.
+   `AGENT_MEDIA_FOCUS=video` does the same for one `make-clip` artifact, but only
+   when `FAL_KEY` and `AGENT_ENABLE_VIDEO=1` are set. `balanced` is the default:
+   pick the strongest format for the material and do not force media variety.
 3. **publish** — `tc-publish/publish.ts --json` upserts each survivor to the user's
    `xyz.tinycloud.artifacts` (KV media + SQL feed row, `approval_status='approved'`)
    and emits the written media keys for run-status observability.

@@ -457,6 +457,50 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
   }
 }
 
+export function buildMediaFocusStep(
+  focus: "balanced" | "podcast" | "video",
+  providers: { geminiEnabled: boolean; videoEnabled: boolean },
+): string[] {
+  if (focus === "podcast") {
+    return providers.geminiEnabled
+      ? [
+          "MEDIA FOCUS: this run is intentionally trying to prove the podcast",
+          "audio path. Before filling the run with cards/articles, look for ONE",
+          "sustained through-line with temporal development that deserves",
+          "make-podcast. If it clears the podcast bar, make that podcast the",
+          "first publishable artifact. If no real episode lead exists, say so",
+          "in the final summary and continue with ordinary publishable artifacts.",
+        ]
+      : [
+          "MEDIA FOCUS REQUESTED: podcast, but no Gemini provider is configured.",
+          "Do not create a podcast shell. Continue with ordinary publishable",
+          "artifacts and state that podcast audio was unavailable.",
+        ];
+  }
+
+  if (focus === "video") {
+    return providers.videoEnabled
+      ? [
+          "MEDIA FOCUS: this run is intentionally trying to prove the video",
+          "clip path. Before filling the run with cards/articles, look for ONE",
+          "unusually visual, emotionally legible reversal worth make-clip spend.",
+          "If it clears the clip bar, make that clip the first publishable",
+          "artifact. If no real clip lead exists, say so in the final summary",
+          "and continue with ordinary publishable artifacts.",
+        ]
+      : [
+          "MEDIA FOCUS REQUESTED: video, but FAL_KEY and AGENT_ENABLE_VIDEO=1",
+          "are both required. Do not create a clip shell. Continue with ordinary",
+          "publishable artifacts and state that video was unavailable.",
+        ];
+  }
+
+  return [
+    "MEDIA FOCUS: balanced. Pick the best formats for the material; do not",
+    "force audio or video just for variety.",
+  ];
+}
+
 /** Build the `claude -p` argv for the generation step (feed-run recipe, scoped). */
 export function buildGenerationArgs(
   corpusDir: string,
@@ -468,6 +512,10 @@ export function buildGenerationArgs(
     process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
   );
   const videoEnabled = process.env.AGENT_ENABLE_VIDEO === "1" && Boolean(process.env.FAL_KEY);
+  const mediaFocusStep = buildMediaFocusStep(config.mediaFocus, {
+    geminiEnabled,
+    videoEnabled,
+  });
   const podcastStep = geminiEnabled
     ? [
         "   - make-podcast for a sustained through-line that benefits from a short",
@@ -528,8 +576,11 @@ export function buildGenerationArgs(
     `- corpus dir:     ${corpusDir}`,
     `- artifacts to:   ${artifactsDir}`,
     `- target publishable Feed artifacts: ${targetArtifacts}`,
+    `- media focus:    ${config.mediaFocus}`,
     "- transcripts:",
     ...transcripts.map((t) => `    ${t}`),
+    "",
+    ...mediaFocusStep,
     "",
     "DO, in order, from the repo root. Read each skill's SKILL.md first.",
     "Every save MUST use the flag  --out-dir " + artifactsDir + "  (load-bearing:",
@@ -539,7 +590,8 @@ export function buildGenerationArgs(
     `2. PUBLISHABLE FEED ARTIFACTS FIRST: aim for up to ${targetArtifacts}`,
     "   publishable internal artifacts before any outward draft. Quality is the",
     "   gate: fewer than the target is correct when the material does not earn",
-    "   more. Prefer distinct signals over format variety. Use these skills:",
+    "   more. In media-focus runs, try the requested rich-media format first",
+    "   only if it clears that skill's own novelty/craft bar. Use these skills:",
     "   - hot-take for compact, quote-anchored internal takes that can fill the",
     "     Feed quickly. Save with skills/hot-take/scripts/save.ts.",
     "   - write-article for the strongest through-line or narrative.",

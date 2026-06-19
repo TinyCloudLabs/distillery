@@ -12,6 +12,7 @@ import {
 import {
   boundedProcessOutput,
   buildGenerationArgs,
+  buildMediaFocusStep,
   createPipelineContext,
   formatArtifactTreeSummary,
   formatDuration,
@@ -198,6 +199,24 @@ describe("agent runner generation prompt", () => {
     expect(enabled).toContain("make-podcast");
     expect(enabled).toContain("skills/make-podcast/SKILL.md");
     expect(enabled).toContain("synthesize.ts");
+  });
+
+  test("can bias a development run toward proving podcast media", () => {
+    expect(buildMediaFocusStep("podcast", { geminiEnabled: true, videoEnabled: false }).join("\n"))
+      .toContain("trying to prove the podcast");
+    expect(buildMediaFocusStep("podcast", { geminiEnabled: true, videoEnabled: false }).join("\n"))
+      .toContain("first publishable artifact");
+    expect(buildMediaFocusStep("podcast", { geminiEnabled: false, videoEnabled: false }).join("\n"))
+      .toContain("no Gemini provider is configured");
+  });
+
+  test("can bias a development run toward proving video media when enabled", () => {
+    expect(buildMediaFocusStep("video", { geminiEnabled: true, videoEnabled: true }).join("\n"))
+      .toContain("trying to prove the video");
+    expect(buildMediaFocusStep("video", { geminiEnabled: true, videoEnabled: false }).join("\n"))
+      .toContain("FAL_KEY and AGENT_ENABLE_VIDEO=1");
+    expect(buildMediaFocusStep("balanced", { geminiEnabled: true, videoEnabled: true }).join("\n"))
+      .toContain("Pick the best formats");
   });
 });
 

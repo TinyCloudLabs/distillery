@@ -110,6 +110,7 @@ async function handleInfo(req: Request): Promise<Response> {
       transcriptCount: config.transcriptCount,
       targetArtifacts: config.targetArtifacts,
       model: config.genModel,
+      mediaFocus: config.mediaFocus,
       media: {
         images: {
           enabled: imageEnabled,
