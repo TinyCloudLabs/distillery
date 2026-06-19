@@ -221,7 +221,9 @@ skills continuously and decides what happens to their output. It is the
   feed-run recipe on demand. The embedded TinyFeed submodule composes its first
   page from a bounded newest-first window, keeping the newest artifact first
   while mixing nearby types/sources/runs so a successful run does not render as
-  a raw cluster of similar cards.
+  a raw cluster of similar cards. Its Preferences page also summarizes
+  interactions as early/directional weak signal, matching the agent runner's
+  backpressure posture.
 
 ### The routing seam (in flight)
 
