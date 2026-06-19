@@ -125,9 +125,9 @@
         commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>1e463e3</code></div>
+        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>c249fd4</code></div>
         <div class="pill"><strong>Feed:</strong> 10 commits ahead of origin/main through <code>2065564</code></div>
-        <div class="pill"><strong>Latest functional checkpoint:</strong> Agent targets multiple visible Feed artifacts</div>
+        <div class="pill"><strong>Latest functional checkpoint:</strong> Compact hot-take skill added</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS/build</div>
       </div>
     </header>
@@ -141,7 +141,7 @@
         </article>
         <article class="card">
           <h3>Artifactory Agent</h3>
-          <p>Reads Listen transcripts, generates artifacts, holds approval-gated drafts, publishes safe artifacts, and reconciles stale runs.</p>
+          <p>Reads Listen transcripts, generates articles and compact cards, holds approval-gated drafts, publishes safe artifacts, and reconciles stale runs.</p>
         </article>
         <article class="card">
           <h3>Smithers</h3>
@@ -282,6 +282,12 @@
             <td>Adds <code>AGENT_TARGET_ARTIFACTS</code> (default 3) and changes generation to aim for multiple publishable internal artifacts before optional held drafts.</td>
             <td><code>harness/agent/src/config.ts</code>, <code>runner.ts</code>, <code>server.ts</code>, <code>agent.env.example</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">c249fd4</span></td>
+            <td>Add compact hot-take skill</td>
+            <td>Adds a fast, quote-anchored internal artifact skill that saves compact hot takes as existing <code>insight-card</code> Feed artifacts.</td>
+            <td><code>skills/hot-take/</code>, <code>harness/agent/src/runner.ts</code>, <code>tests/hot-take.test.ts</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -366,11 +372,11 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>1e463e3 Target multiple feed artifacts per run</code>.
-        The agent now targets up to <code>AGENT_TARGET_ARTIFACTS=3</code>
-        publishable internal artifacts before optional held drafts. This is a
-        quality-gated cap, not a quota, so a run may still publish fewer when the
-        material does not earn more.
+        <code>c249fd4 Add compact hot-take skill</code>.
+        The agent now has a faster path for small, Feed-visible artifacts:
+        quote-anchored hot takes saved as <code>insight-card</code>. This sits
+        on top of <code>AGENT_TARGET_ARTIFACTS=3</code>, which was validated by
+        a staged run that published three artifacts in one pass.
       </p>
     </section>
 
@@ -378,6 +384,7 @@
       <h2>Validation Evidence</h2>
       <ul>
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/agent-runner.test.ts tests/listen-read-lib.test.ts</code></li>
+        <li><span class="status-ok">Artifactory:</span> <code>bun test tests/hot-take.test.ts tests/agent-runner.test.ts</code> passed 22 tests, including compactness and outward-draft rejection for hot takes.</li>
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/agent-runner.test.ts</code> includes prompt-order, publishable-target, and generation-visibility regression checks.</li>
         <li><span class="status-ok">Artifactory:</span> <code>bun run typecheck</code></li>
         <li><span class="status-ok">Smithers:</span> <code>bun run smithers:list</code></li>
@@ -389,7 +396,9 @@
         <li><span class="status-ok">Artifactory embedded Feed:</span> <code>bun run artifact:frontend:check</code> passed and warned that submodule <code>2bda175</code> differs from sibling <code>2065564</code>.</li>
         <li><span class="status-ok">Artifactory embedded Feed:</span> <code>ARTIFACT_FEED_DRIFT=strict bash scripts/artifact-feed-check.sh</code> failed before build, as intended.</li>
         <li><span class="status-ok">Staged agent run:</span> <code>bun run smithers:agent-run:staged</code> completed in 8m59s and published <code>article/it-built-it-didn-t-ship-and-nobody-could-see-why</code>; it held <code>social-post/enqueue-time-timeout-kills-the-tail-of-your-queue</code> for approval.</li>
+        <li><span class="status-ok">Staged agent run:</span> <code>run-1781835553692-2cjnp6</code> completed in 6m26s with target 3 and published <code>article/the-demo-house-nobody-can-move-into</code>, <code>insight-card/desperation-is-the-real-dilution-the-runway-first-fundraising-sp</code>, and <code>insight-card/the-permission-slip-is-public-only-the-key-is-secret</code>.</li>
         <li><span class="status-ok">TinyCloud feed table:</span> direct delegated <code>tc sql query</code> returned 2 newest article rows in <code>xyz.tinycloud.artifacts/feed</code>: <code>it-built-it-didn-t-ship-and-nobody-could-see-why</code> and <code>the-checks-kept-passing-nothing-shipped</code>.</li>
+        <li><span class="status-ok">TinyCloud feed table:</span> direct delegated <code>tc sql query</code> after the target-3 run returned 5 total rows, with latest rows including the three newly published artifacts above.</li>
         <li><span class="status-ok">Stale run cleanup:</span> <code>run-1781811131857-3r6pbz</code> is now <code>error</code>, not <code>running</code>.</li>
       </ul>
     </section>
