@@ -125,9 +125,9 @@
         commits ahead of each repo's <code>origin/main</code>.
       </p>
       <div class="meta">
-        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>624a369</code></div>
+        <div class="pill"><strong>Artifactory:</strong> functional checkpoints through <code>f13ee24</code></div>
         <div class="pill"><strong>Feed:</strong> 10 commits ahead of origin/main through <code>2065564</code></div>
-        <div class="pill"><strong>Latest functional checkpoint:</strong> Smithers reports Feed submodule drift</div>
+        <div class="pill"><strong>Latest functional checkpoint:</strong> Agent generation prioritizes visible Feed artifacts</div>
         <div class="pill"><strong>Validated recently:</strong> Artifactory tests/TS/Smithers + Feed TS/build</div>
       </div>
     </header>
@@ -264,6 +264,12 @@
             <td>Adds the same submodule-vs-sibling Feed readiness check to <code>feed-dev-mode</code> and emits explicit Smithers log lines for each probe result.</td>
             <td><code>.smithers/workflows/feed-dev-mode.tsx</code>, <code>.smithers/README.md</code></td>
           </tr>
+          <tr>
+            <td><span class="hash">f13ee24</span></td>
+            <td>Prioritize publishable feed artifacts</td>
+            <td>Changes the agent generation prompt from tweet-first to article-first so runs produce a Feed-visible artifact before optional approval-held social drafts.</td>
+            <td><code>harness/agent/src/runner.ts</code>, <code>tests/agent-runner.test.ts</code>, <code>harness/agent/README.md</code></td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -348,11 +354,10 @@
       <h2>Latest Checkpoint</h2>
       <p class="note">
         <span class="status-ok">Newest local checkpoint:</span>
-        <code>624a369 Surface Feed drift in Smithers dev mode</code>.
-        Manual Artifactory dev checks and the Smithers <code>feed-dev-mode</code>
-        workflow now both report that the vendored Feed submodule is at
-        <code>2bda175</code>, while the sibling Feed repo is at
-        <code>2065564</code>.
+        <code>f13ee24 Prioritize publishable feed artifacts</code>.
+        The agent runner now asks Claude to make a publishable article first,
+        then optionally make a social-post draft. This matches what the user sees
+        in Feed: social posts are held for approval and do not fill the Feed.
       </p>
     </section>
 
@@ -360,6 +365,7 @@
       <h2>Validation Evidence</h2>
       <ul>
         <li><span class="status-ok">Artifactory:</span> <code>bun test tests/agent-runner.test.ts tests/listen-read-lib.test.ts</code></li>
+        <li><span class="status-ok">Artifactory:</span> <code>bun test tests/agent-runner.test.ts</code> includes a prompt-order regression check for article-before-social-post.</li>
         <li><span class="status-ok">Artifactory:</span> <code>bun run typecheck</code></li>
         <li><span class="status-ok">Smithers:</span> <code>bun run smithers:list</code></li>
         <li><span class="status-ok">Smithers:</span> <code>bun run smithers:doctor</code></li>
@@ -369,6 +375,8 @@
         <li><span class="status-ok">Feed:</span> <code>bun run build</code></li>
         <li><span class="status-ok">Artifactory embedded Feed:</span> <code>bun run artifact:frontend:check</code> passed and warned that submodule <code>2bda175</code> differs from sibling <code>2065564</code>.</li>
         <li><span class="status-ok">Artifactory embedded Feed:</span> <code>ARTIFACT_FEED_DRIFT=strict bash scripts/artifact-feed-check.sh</code> failed before build, as intended.</li>
+        <li><span class="status-ok">Staged agent run:</span> <code>bun run smithers:agent-run:staged</code> completed in 8m59s and published <code>article/it-built-it-didn-t-ship-and-nobody-could-see-why</code>; it held <code>social-post/enqueue-time-timeout-kills-the-tail-of-your-queue</code> for approval.</li>
+        <li><span class="status-ok">TinyCloud feed table:</span> direct delegated <code>tc sql query</code> returned 2 newest article rows in <code>xyz.tinycloud.artifacts/feed</code>: <code>it-built-it-didn-t-ship-and-nobody-could-see-why</code> and <code>the-checks-kept-passing-nothing-shipped</code>.</li>
         <li><span class="status-ok">Stale run cleanup:</span> <code>run-1781811131857-3r6pbz</code> is now <code>error</code>, not <code>running</code>.</li>
       </ul>
     </section>
