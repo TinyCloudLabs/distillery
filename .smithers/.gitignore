@@ -6,6 +6,7 @@ sandboxes/
 remote/
 state/
 tmp/
+reports/
 *.db
 *.sqlite
 *.db-shm

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "smithers workflow list >/dev/null && smithers graph workflows/feed-dev-mode.tsx >/dev/null && smithers graph workflows/agent-run.tsx >/dev/null && smithers graph workflows/agent-run-staged.tsx >/dev/null",
+    "typecheck": "smithers workflow list >/dev/null && smithers graph workflows/feed-dev-mode.tsx >/dev/null && smithers graph workflows/agent-run.tsx >/dev/null && smithers graph workflows/agent-run-staged.tsx >/dev/null && smithers graph workflows/artifact-type-smoke.tsx >/dev/null && smithers graph workflows/feed-composition-smoke.tsx >/dev/null",
     "gateway": "bun ./gateway.ts",
     "workflow:list": "smithers workflow list",
     "workflow:run": "smithers workflow run",

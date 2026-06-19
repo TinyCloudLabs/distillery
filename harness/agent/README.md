@@ -255,8 +255,29 @@ rather than growing a parallel pipeline. For local development checks, run:
 bun run smithers:doctor
 bun run smithers:ps
 bun run smithers:dev-mode
+bun run smithers:artifact-types
+bun run smithers:composition
 bun run smithers:agent-run
 bun run smithers:agent-run:staged
+```
+
+`smithers:artifact-types` is the safe per-format smoke test: it targets one
+artifact type (or `all`) and verifies registry/render routing, skill docs, and
+the relevant deterministic Bun tests without publishing, invoking Claude, or
+spending on media APIs. `smithers:composition` is the higher-level feed-quality
+gate: it checks freshness/ordering/backpressure, the format-exploration reserve,
+published-vs-draft cap behavior, and same-signal dedup. That belongs above the
+individual skills because it evaluates whether a run makes a good feed, not
+whether one artifact can be generated. Both smoke workflows also write
+gitignored JSON reports under `.smithers/reports/` so the matrix details remain
+inspectable even when the Smithers CLI only prints node success.
+
+Examples:
+
+```sh
+bun run smithers:artifact-types
+bunx smithers-orchestrator workflow run artifact-type-smoke --input '{"artifactType":"podcast"}'
+bun run smithers:composition
 ```
 
 For the local HTTPS browser loop, prefer the one-command Portless launcher:

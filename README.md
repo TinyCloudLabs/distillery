@@ -190,6 +190,13 @@ skills continuously and decides what happens to their output. It is the
   pass) → critic → publish, under a per-run artifact cap. Designed to run
   headless via `claude -p` (subscription-covered reasoning; only Gemini media
   meters, ≈$4/month). See [docs/CORPUS-NAVIGATION-SPEC.md](docs/CORPUS-NAVIGATION-SPEC.md).
+- **Smithers smoke gates** (`.smithers/workflows/`) — `artifact-type-smoke`
+  targets one artifact format or the full format matrix and runs the relevant
+  deterministic tests without publishing or model/media spend. `feed-composition-
+  smoke` sits above individual skills: it verifies ordering/freshness
+  backpressure, format diversity, published cap behavior, draft isolation, and
+  same-signal dedup so a run remains a good feed rather than a pile of valid
+  artifacts.
 - **The delegated Feed agent** (`harness/agent/`) — the HTTPS/browser path used
   by TinyFeed. It runs `listen-read → generate → publish` under the user's
   TinyCloud delegation, logs heartbeats for long child stages, and reports
