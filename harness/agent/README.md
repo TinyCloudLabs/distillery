@@ -42,6 +42,11 @@ reflect what the publisher actually wrote to TinyCloud (`heroKey`, `audioKey`,
 `videoKey`) and Feed can show accurate run-history badges such as `3 images`.
 Generated-but-held artifacts are structured in `held[]` as well as logged, so
 Feed and Smithers can show why a podcast/clip/draft did not become a durable row.
+Before each published artifact is handed to `tc-publish`, the runner stamps
+`raw_artifact.producer` with the agent pipeline, run id, delegated space,
+delegation CID/expiry, requested target artifact type, and media focus. Feed
+renders that block in each card's Data trail so a durable artifact can be traced
+back to the delegated run that produced it.
 
 Queued/running records are reconciled on read: if the last recorded progress log
 is older than `AGENT_RUN_STALE_MS` (default 20 minutes), the server rewrites the

@@ -24,6 +24,7 @@ import {
   runPublishStage,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
+  stampArtifactRunProvenance,
   type PipelineContext,
   summarizeArtifactTree,
   summarizeArtifactRoutes,
@@ -539,6 +540,48 @@ describe("agent runner artifact media preflight", () => {
 
     expect(warnings).toEqual([]);
     expect((await readArtifact(dir)).hero_image).toBe("hero.png");
+  });
+
+  test("stamps agent run provenance before publish", async () => {
+    const artifact = { type: "article", slug: "provenance" };
+    const dir = await tempArtifactDir(artifact);
+    const state: RunState = {
+      run_id: "run-1781811131857-prv001",
+      status: "running",
+      published: [],
+      startedAt: Date.now(),
+      log: [],
+    };
+    const ctx: PipelineContext = {
+      active: {
+        spaceId: "did:pkh:eip155:1:0x0000000000000000000000000000000000000001",
+        delegationCid: "bafy-delegation",
+        expiresAt: "2026-06-19T22:00:00.000Z",
+      } as unknown as ActiveDelegation,
+      state,
+      onProgress: () => {},
+      space: "did:pkh:eip155:1:0x0000000000000000000000000000000000000001",
+      corpusDir: join(dir, "corpus"),
+      artifactsDir: join(dir, "artifacts"),
+      targetArtifactType: "article",
+      step: () => {},
+    };
+
+    await stampArtifactRunProvenance(dir, ctx);
+
+    const written = await readArtifact(dir);
+    expect(written.producer).toMatchObject({
+      pipeline: "artifactory-agent",
+      run_id: "run-1781811131857-prv001",
+      delegated_space: "did:pkh:eip155:1:0x0000000000000000000000000000000000000001",
+      delegation_cid: "bafy-delegation",
+      delegation_expires_at: "2026-06-19T22:00:00.000Z",
+      target_artifact_type: "article",
+      media_focus: "balanced",
+    });
+    expect(typeof (written.producer as Record<string, unknown>).published_by_agent_at).toBe(
+      "string",
+    );
   });
 
   test("strips missing optional audio before publish", async () => {

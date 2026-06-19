@@ -203,7 +203,9 @@ skills continuously and decides what happens to their output. It is the
   by TinyFeed. It runs `listen-read → generate → publish` under the user's
   TinyCloud delegation, logs heartbeats for long child stages, and reports
   published media from `tc-publish --json` so run status reflects the media keys
-  that actually reached TinyCloud.
+  that actually reached TinyCloud. Before publish it stamps
+  `raw_artifact.producer` with run/delegation provenance so Feed cards can show
+  which delegated run produced each durable artifact.
 - **The feedback → PREFERENCES.md backpressure loop** — the Folio feed logs
   six revealed-preference actions (`more`, `less`, `save`, `already_knew`,
   `wrong`, plus hide) to `feedback/events.jsonl`; `distill-preferences`

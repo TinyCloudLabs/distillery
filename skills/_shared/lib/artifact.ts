@@ -44,6 +44,25 @@ export interface ArtifactQuality {
   notes?: string;
 }
 
+export interface ArtifactProducerProvenance {
+  /** Orchestration surface that published this artifact. */
+  pipeline: "artifactory-agent";
+  /** Agent run id, when the artifact came from harness/agent. */
+  run_id?: string;
+  /** TinyCloud space the agent published into under delegation. */
+  delegated_space?: string;
+  /** CID of the active UCAN delegation used by the agent. */
+  delegation_cid?: string;
+  /** Delegation expiry visible to operators debugging stale grants. */
+  delegation_expires_at?: string;
+  /** Development target requested by Smithers/operator runs. */
+  target_artifact_type?: ArtifactType;
+  /** Rich-media focus requested for this run. */
+  media_focus?: "balanced" | "podcast" | "video";
+  /** When the agent handed this artifact to tc-publish. */
+  published_by_agent_at?: string;
+}
+
 export interface Artifact {
   id: string;
   type: ArtifactType;
@@ -78,6 +97,8 @@ export interface Artifact {
   audience?: Audience;
   /** Target platform when relevant, e.g. "x" / "linkedin". Free-form. */
   platform?: string;
+  /** Optional orchestration provenance stamped by the publishing harness. */
+  producer?: ArtifactProducerProvenance;
 }
 
 export type ValidationResult =
@@ -165,6 +186,40 @@ export function validateArtifact(value: unknown): ValidationResult {
       errors.push("quality.quotes_verified: required boolean");
     if (q.notes !== undefined && typeof q.notes !== "string")
       errors.push("quality.notes: must be a string when present");
+  }
+
+  if (a.producer !== undefined) {
+    if (typeof a.producer !== "object" || a.producer === null || Array.isArray(a.producer)) {
+      errors.push("producer: must be an object when present");
+    } else {
+      const p = a.producer as Record<string, unknown>;
+      if (p.pipeline !== "artifactory-agent") {
+        errors.push('producer.pipeline: must be "artifactory-agent" when producer is present');
+      }
+      for (const key of [
+        "run_id",
+        "delegated_space",
+        "delegation_cid",
+        "delegation_expires_at",
+        "published_by_agent_at",
+      ]) {
+        if (p[key] !== undefined && typeof p[key] !== "string") {
+          errors.push(`producer.${key}: must be a string when present`);
+        }
+      }
+      if (
+        p.target_artifact_type !== undefined &&
+        !ARTIFACT_TYPES.includes(p.target_artifact_type as ArtifactType)
+      ) {
+        errors.push(`producer.target_artifact_type: must be one of ${ARTIFACT_TYPES.join(", ")}`);
+      }
+      if (
+        p.media_focus !== undefined &&
+        !["balanced", "podcast", "video"].includes(p.media_focus as string)
+      ) {
+        errors.push("producer.media_focus: must be one of balanced, podcast, video");
+      }
+    }
   }
 
   if (errors.length > 0) return { ok: false, errors };

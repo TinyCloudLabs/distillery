@@ -463,6 +463,7 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
   for (const artifact of publishable) {
     const label = `${artifact.type}/${artifact.slug}`;
     ctx.step(`publish: publishing ${label}`);
+    await stampArtifactRunProvenance(artifact.dir, ctx);
     const pub = await run(
       "bun",
       [SKILLS.publish, artifact.dir, "--space", ctx.active.spaceId, "--json"],
@@ -486,6 +487,38 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
     if (ref) ctx.state.published.push(ref);
     ctx.step(`publish: ${ref ? `${ref.type}/${ref.slug}${formatMediaSummary(ref)}` : label} published`);
   }
+}
+
+export async function stampArtifactRunProvenance(
+  artifactDir: string,
+  ctx: PipelineContext,
+): Promise<void> {
+  const jsonPath = join(artifactDir, "artifact.json");
+  const raw = JSON.parse(await readFile(jsonPath, "utf8")) as unknown;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`cannot stamp provenance for malformed artifact ${jsonPath}`);
+  }
+  const artifact = raw as Record<string, unknown>;
+  const existingProducer =
+    artifact.producer !== null &&
+    typeof artifact.producer === "object" &&
+    !Array.isArray(artifact.producer)
+      ? (artifact.producer as Record<string, unknown>)
+      : {};
+
+  artifact.producer = {
+    ...existingProducer,
+    pipeline: "artifactory-agent",
+    run_id: ctx.state.run_id,
+    delegated_space: ctx.active.spaceId,
+    delegation_cid: ctx.active.delegationCid,
+    delegation_expires_at: ctx.active.expiresAt,
+    ...(ctx.targetArtifactType ? { target_artifact_type: ctx.targetArtifactType } : {}),
+    media_focus: config.mediaFocus,
+    published_by_agent_at: new Date().toISOString(),
+  };
+
+  await writeFile(jsonPath, JSON.stringify(artifact, null, 2) + "\n");
 }
 
 export function buildMediaFocusStep(
