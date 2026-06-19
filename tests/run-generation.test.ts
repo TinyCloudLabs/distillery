@@ -17,7 +17,7 @@
 // NO real claude call, NO real generation, anywhere in this file.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile, readFile, chmod, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile, chmod, stat, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -754,6 +754,12 @@ describe("feed-run wiring (fake claude on PATH — no real agent/model)", () => 
     const { status, stdout } = runFeedRun(ctx, ["--dry-run", "--since", "2026-06-07"]);
     expect(status).toBe(0);
     expect(stdout).toContain("# Feed-run brief");
+    expect(stdout).toContain("hot-take +");
+    expect(stdout).toContain("compact/internal feed miners");
+    const runDirs = await readdir(ctx.runsDir);
+    const brief = await readFile(join(ctx.runsDir, runDirs[0]!, "run-brief.md"), "utf8");
+    expect(brief).toContain("hot-take +");
+    expect(brief).toContain("compact/internal feed miners");
     // The fake claude was never spawned.
     expect(await claudeWasInvoked(ctx)).toBeNull();
   });
