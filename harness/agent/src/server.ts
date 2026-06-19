@@ -28,6 +28,7 @@ import {
   listRuns,
   readRun,
   releaseRunLock,
+  summarizePublishedMedia,
   writeRun,
 } from "./runs.ts";
 import { PERMISSIONS } from "./permissions.ts";
@@ -227,6 +228,7 @@ function handleGetRun(req: Request, runId: string): Response {
     run_id: state.run_id,
     status: state.status,
     published: state.published,
+    media: summarizePublishedMedia(state.published),
     startedAt: state.startedAt,
     ...(typeof state.finishedAt === "number" ? { finishedAt: state.finishedAt } : {}),
     ...(log.length > 0 ? { log } : {}),

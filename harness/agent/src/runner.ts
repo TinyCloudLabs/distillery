@@ -50,10 +50,17 @@ export interface PublishedRef {
   };
 }
 
+export interface RunMediaSummary {
+  heroImages: number;
+  audio: number;
+  video: number;
+}
+
 export interface RunState {
   run_id: string;
   status: RunStatus;
   published: PublishedRef[];
+  media?: RunMediaSummary;
   error?: string;
   startedAt: number;
   finishedAt?: number;

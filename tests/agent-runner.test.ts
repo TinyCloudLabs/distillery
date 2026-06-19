@@ -3,7 +3,12 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyListenReadResult } from "../harness/agent/src/listen-read-outcome.ts";
-import { canReclaimRunLock, reconcileStaleRun, summarizeRunLock } from "../harness/agent/src/runs.ts";
+import {
+  canReclaimRunLock,
+  reconcileStaleRun,
+  summarizePublishedMedia,
+  summarizeRunLock,
+} from "../harness/agent/src/runs.ts";
 import {
   boundedProcessOutput,
   buildGenerationArgs,
@@ -217,6 +222,18 @@ describe("agent runner generation visibility", () => {
       }),
     ).toBe(" (no media)");
     expect(formatMediaSummary({ type: "article", slug: "old-shape" })).toBe("");
+  });
+
+  test("aggregates run-level media counts from published artifacts", () => {
+    expect(
+      summarizePublishedMedia([
+        { type: "article", slug: "a", media: { heroImage: true, audio: false, video: false } },
+        { type: "podcast", slug: "b", media: { heroImage: true, audio: true, video: false } },
+        { type: "clip", slug: "c", media: { heroImage: true, audio: false, video: true } },
+        { type: "article", slug: "old-shape" },
+      ]),
+    ).toEqual({ heroImages: 3, audio: 1, video: 1 });
+    expect(summarizePublishedMedia(undefined)).toEqual({ heroImages: 0, audio: 0, video: 0 });
   });
 
   test("bounds child process output tails for run logs", () => {

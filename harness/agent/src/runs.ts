@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config.ts";
-import type { RunState, RunStatus, PublishedRef } from "./runner.ts";
+import type { RunMediaSummary, RunState, RunStatus, PublishedRef } from "./runner.ts";
 
 const RUN_SUMMARY_LOG_TAIL = 8;
 
@@ -28,6 +28,7 @@ export interface RunSummary {
   startedAt: number;
   finishedAt?: number;
   published?: PublishedRef[];
+  media?: RunMediaSummary;
   error?: string;
   log?: string[];
 }
@@ -289,9 +290,20 @@ function toSummary(state: RunState): RunSummary | null {
     startedAt,
     ...(typeof finishedAt === "number" ? { finishedAt } : {}),
     ...(published_ ? { published: published_ } : {}),
+    ...(published_ ? { media: summarizePublishedMedia(published_) } : {}),
     ...(typeof error === "string" && error ? { error } : {}),
     ...(log_.length > 0 ? { log: log_ } : {}),
   };
+}
+
+export function summarizePublishedMedia(published: PublishedRef[] | undefined): RunMediaSummary {
+  const summary: RunMediaSummary = { heroImages: 0, audio: 0, video: 0 };
+  for (const artifact of Array.isArray(published) ? published : []) {
+    if (artifact?.media?.heroImage) summary.heroImages += 1;
+    if (artifact?.media?.audio) summary.audio += 1;
+    if (artifact?.media?.video) summary.video += 1;
+  }
+  return summary;
 }
 
 /**
