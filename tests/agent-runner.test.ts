@@ -12,6 +12,7 @@ import {
 import {
   boundedProcessOutput,
   buildGenerationArgs,
+  buildInteractionBackpressureStep,
   buildMediaFocusStep,
   buildTargetArtifactTypeStep,
   createPipelineContext,
@@ -25,6 +26,7 @@ import {
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
   stampArtifactRunProvenance,
+  summarizeInteractionBackpressure,
   type PipelineContext,
   summarizeArtifactTree,
   summarizeArtifactRoutes,
@@ -253,6 +255,59 @@ describe("agent runner generation prompt", () => {
     expect(systemPrompt).toContain("ARTIFACT TARGET: digest");
     expect(systemPrompt).toContain("Try `write-digest` first");
     expect(systemPrompt).toContain("quality still wins");
+  });
+
+  test("summarizes Feed interactions as weak backpressure, not hard preferences", () => {
+    const summary = summarizeInteractionBackpressure([
+      {
+        artifact_id: "article-1",
+        artifact_type: "article",
+        action: "more",
+        note: null,
+        recorded_at: "2026-06-19T18:00:00.000Z",
+      },
+      {
+        artifact_id: "article-2",
+        artifact_type: "article",
+        action: "save",
+        note: "useful framing",
+        recorded_at: "2026-06-19T18:01:00.000Z",
+      },
+      {
+        artifact_id: "podcast-1",
+        artifact_type: "podcast",
+        action: "less",
+        note: "too thin",
+        recorded_at: "2026-06-19T18:02:00.000Z",
+      },
+    ]);
+
+    expect(summary.status).toBe("ready");
+    expect(summary.lines.join("\n")).toContain("more=1");
+    expect(summary.lines.join("\n")).toContain("save=1");
+    expect(summary.lines.join("\n")).toContain("less=1");
+    expect(summary.lines.join("\n")).toContain("Reader note: save on article/article-2");
+
+    const prompt = buildInteractionBackpressureStep(summary).join("\n");
+    expect(prompt).toContain("weak prior");
+    expect(prompt).toContain("not a settled preference model");
+    expect(prompt).toContain("Preserve exploration");
+    expect(prompt).toContain("wrong` as an accuracy warning");
+  });
+
+  test("threads reader interaction backpressure into the generation prompt", () => {
+    const args = withMediaEnv({ GEMINI_API_KEY: "test-key" }, () =>
+      buildGenerationArgs("/tmp/corpus", "/tmp/artifacts", ["/tmp/corpus/demo.md"], {
+        interactionBackpressure: {
+          status: "ready",
+          lines: ["Recent interactions: 2 event(s); more=1, less=1."],
+        },
+      }),
+    );
+    const systemPrompt = String(args[args.indexOf("--system-prompt") + 1]);
+    expect(systemPrompt).toContain("READER BACKPRESSURE");
+    expect(systemPrompt).toContain("Recent interactions: 2 event(s); more=1, less=1.");
+    expect(systemPrompt).toContain("Preserve exploration");
   });
 });
 

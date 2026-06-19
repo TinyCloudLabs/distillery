@@ -48,6 +48,14 @@ delegation CID/expiry, requested target artifact type, and media focus. Feed
 renders that block in each card's Data trail so a durable artifact can be traced
 back to the delegated run that produced it.
 
+Before generation, the runner also reads recent Feed interaction rows from
+`xyz.tinycloud.artifacts/interactions` under the same delegation and injects a
+compact backpressure summary into the generation prompt. Feed owns capture and
+display of interactions; Artifactory owns using those signals to shape the next
+run. The prompt explicitly treats this as a weak prior, not a settled preference
+model, so early clicks do not overfit the system before user preferences regress
+toward a stable mean.
+
 Queued/running records are reconciled on read: if the last recorded progress log
 is older than `AGENT_RUN_STALE_MS` (default 20 minutes), the server rewrites the
 run to `error` with a stale-run explanation. This catches server restarts,

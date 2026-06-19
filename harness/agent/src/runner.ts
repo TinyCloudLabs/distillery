@@ -37,6 +37,10 @@ import { config } from "./config.ts";
 import type { ActiveDelegation } from "./session.ts";
 import { classifyListenReadResult } from "./listen-read-outcome.ts";
 import { ARTIFACT_TYPES, isOutwardType, type ArtifactType } from "../../../skills/_shared/lib/formats.ts";
+import { sqlQuery } from "../../../skills/_shared/lib/tc.ts";
+
+const INTERACTIONS_DB = "xyz.tinycloud.artifacts/interactions";
+const INTERACTION_SUMMARY_LIMIT = 50;
 
 export type RunStatus = "queued" | "running" | "done" | "error";
 
@@ -60,6 +64,20 @@ export interface RunMediaSummary {
   heroImages: number;
   audio: number;
   video: number;
+}
+
+export interface InteractionBackpressureRow {
+  artifact_id: string;
+  artifact_type: string;
+  action: string;
+  note: string | null;
+  recorded_at: string;
+}
+
+export interface InteractionBackpressure {
+  status: "ready" | "empty" | "unavailable";
+  lines: string[];
+  reason?: string;
 }
 
 export interface RunState {
@@ -405,6 +423,14 @@ export async function runGenerateStage(
   // GENERATE — headless claude over the corpus → publishable Feed artifact first,
   // optional approval-held outward draft second.
   ctx.step("generate: distilling publishable feed artifact from the corpus");
+  const backpressure = await loadInteractionBackpressure(ctx);
+  if (backpressure.status === "ready") {
+    ctx.step(`feedback: loaded interaction backpressure (${backpressure.lines.length} line(s))`);
+  } else if (backpressure.status === "empty") {
+    ctx.step("feedback: no reader interactions yet");
+  } else {
+    ctx.step(`feedback: unavailable (${backpressure.reason ?? "unknown error"})`);
+  }
   // SCRUBBED env + minimal HOME (only a ~/.claude symlink): claude reads its own
   // credentials and writes artifact files locally, but a prompt-injected
   // transcript can't reach ~/.tinycloud, the agent state, env secrets, or `tc`.
@@ -412,6 +438,7 @@ export async function runGenerateStage(
     "claude",
     buildGenerationArgs(ctx.corpusDir, ctx.artifactsDir, transcripts, {
       targetArtifactType: ctx.targetArtifactType,
+      interactionBackpressure: backpressure,
     }),
     "generate",
     {
@@ -435,6 +462,108 @@ export async function runGenerateStage(
   if (stdoutTail) ctx.step(`generate: ${stdoutTail}`);
   const stderrTail = boundedProcessOutput("stderr", gen.stderr);
   if (stderrTail) ctx.step(`generate: ${stderrTail}`);
+}
+
+function isMissingInteractionsTable(message: string): boolean {
+  return /no such table/i.test(message);
+}
+
+function tcSandboxEnv(): Record<string, string> {
+  return { HOME: config.tcHome };
+}
+
+function zipInteractionRows(columns: string[], rows: unknown[][]): InteractionBackpressureRow[] {
+  return rows.flatMap((row) => {
+    const value = Object.fromEntries(columns.map((column, index) => [column, row[index]]));
+    if (
+      typeof value.artifact_id !== "string" ||
+      typeof value.artifact_type !== "string" ||
+      typeof value.action !== "string" ||
+      typeof value.recorded_at !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        artifact_id: value.artifact_id,
+        artifact_type: value.artifact_type,
+        action: value.action,
+        note: typeof value.note === "string" && value.note.trim() ? value.note.trim() : null,
+        recorded_at: value.recorded_at,
+      },
+    ];
+  });
+}
+
+export function summarizeInteractionBackpressure(
+  rows: readonly InteractionBackpressureRow[],
+): InteractionBackpressure {
+  if (rows.length === 0) return { status: "empty", lines: [] };
+
+  const actionCounts = new Map<string, number>();
+  const typeCounts = new Map<string, Map<string, number>>();
+  const notes: string[] = [];
+
+  for (const row of rows) {
+    actionCounts.set(row.action, (actionCounts.get(row.action) ?? 0) + 1);
+    const byAction = typeCounts.get(row.artifact_type) ?? new Map<string, number>();
+    byAction.set(row.action, (byAction.get(row.action) ?? 0) + 1);
+    typeCounts.set(row.artifact_type, byAction);
+    if (row.note && notes.length < 5) {
+      notes.push(`${row.action} on ${row.artifact_type}/${row.artifact_id}: ${row.note}`);
+    }
+  }
+
+  const actionSummary = [...actionCounts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([action, count]) => `${action}=${count}`)
+    .join(", ");
+  const typeSummary = [...typeCounts.entries()]
+    .sort((a, b) => {
+      const aTotal = [...a[1].values()].reduce((sum, count) => sum + count, 0);
+      const bTotal = [...b[1].values()].reduce((sum, count) => sum + count, 0);
+      return bTotal - aTotal || a[0].localeCompare(b[0]);
+    })
+    .slice(0, 6)
+    .map(([type, byAction]) => {
+      const parts = [...byAction.entries()]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([action, count]) => `${action}=${count}`)
+        .join(", ");
+      return `${type}: ${parts}`;
+    });
+
+  return {
+    status: "ready",
+    lines: [
+      `Recent interactions: ${rows.length} event(s); ${actionSummary}.`,
+      ...typeSummary.map((line) => `By type: ${line}.`),
+      ...notes.map((line) => `Reader note: ${line}`),
+    ],
+  };
+}
+
+export async function loadInteractionBackpressure(
+  ctx: PipelineContext,
+): Promise<InteractionBackpressure> {
+  try {
+    const result = await sqlQuery(
+      "SELECT artifact_id, artifact_type, action, note, recorded_at " +
+        "FROM interaction ORDER BY recorded_at DESC LIMIT ?",
+      { db: INTERACTIONS_DB, space: ctx.active.spaceId },
+      [INTERACTION_SUMMARY_LIMIT],
+      { env: tcSandboxEnv() },
+    );
+    return summarizeInteractionBackpressure(zipInteractionRows(result.columns, result.rows));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (isMissingInteractionsTable(message)) return { status: "empty", lines: [] };
+    return {
+      status: "unavailable",
+      lines: [],
+      reason: message.slice(0, 240),
+    };
+  }
 }
 
 export async function runPublishStage(ctx: PipelineContext): Promise<void> {
@@ -642,12 +771,44 @@ export function buildTargetArtifactTypeStep(target?: ArtifactType): string[] {
   }
 }
 
+export function buildInteractionBackpressureStep(
+  backpressure?: InteractionBackpressure,
+): string[] {
+  if (!backpressure || backpressure.status === "empty") {
+    return [
+      "READER BACKPRESSURE: no Feed interaction signals yet. Generate from corpus",
+      "quality, novelty, and the explicit instructions above.",
+    ];
+  }
+  if (backpressure.status === "unavailable") {
+    return [
+      "READER BACKPRESSURE: unavailable. Continue generation, but mention in the",
+      "final summary that interaction backpressure could not be read.",
+      backpressure.reason ? `Reason: ${backpressure.reason}` : "",
+    ].filter(Boolean);
+  }
+  return [
+    "READER BACKPRESSURE: recent Feed interactions from TinyCloud are below.",
+    "Treat this as a weak prior, not a settled preference model. Early feedback",
+    "is noisy and may regress toward the user's real mean as more artifacts land.",
+    "Preserve exploration unless a signal is repeated and directionally clear.",
+    "Treat `more` and `save` as positive pull, `less` and `already_knew` as",
+    "suppression/novelty calibration, and `wrong` as an accuracy warning.",
+    "Do not blindly repeat liked artifacts; generalize the underlying topic,",
+    "format, source, or level of specificity when the corpus earns it.",
+    ...backpressure.lines.map((line) => `- ${line}`),
+  ];
+}
+
 /** Build the `claude -p` argv for the generation step (feed-run recipe, scoped). */
 export function buildGenerationArgs(
   corpusDir: string,
   artifactsDir: string,
   transcripts: string[],
-  options: { targetArtifactType?: ArtifactType } = {},
+  options: {
+    targetArtifactType?: ArtifactType;
+    interactionBackpressure?: InteractionBackpressure;
+  } = {},
 ): string[] {
   const targetArtifacts = config.targetArtifacts;
   const geminiEnabled = Boolean(
@@ -659,6 +820,9 @@ export function buildGenerationArgs(
     videoEnabled,
   });
   const targetArtifactTypeStep = buildTargetArtifactTypeStep(options.targetArtifactType);
+  const interactionBackpressureStep = buildInteractionBackpressureStep(
+    options.interactionBackpressure,
+  );
   const podcastStep = geminiEnabled
     ? [
         "   - make-podcast for a sustained through-line that benefits from a short",
@@ -726,6 +890,8 @@ export function buildGenerationArgs(
     ...mediaFocusStep,
     "",
     ...targetArtifactTypeStep,
+    "",
+    ...interactionBackpressureStep,
     "",
     "DO, in order, from the repo root. Read each skill's SKILL.md first.",
     "Every save MUST use the flag  --out-dir " + artifactsDir + "  (load-bearing:",
