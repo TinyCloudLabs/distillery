@@ -14,6 +14,7 @@ import {
   buildGenerationArgs,
   createPipelineContext,
   formatMediaSummary,
+  publishedRefFromPublishStdout,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
   summarizeArtifactRoutes,
@@ -222,6 +223,38 @@ describe("agent runner generation visibility", () => {
       }),
     ).toBe(" (no media)");
     expect(formatMediaSummary({ type: "article", slug: "old-shape" })).toBe("");
+  });
+
+  test("uses tc-publish JSON output as the source of truth for published media", () => {
+    const ref = publishedRefFromPublishStdout(
+      JSON.stringify({
+        id: "artifact-1",
+        type: "article",
+        render_type: "article",
+        slug: "with-image",
+        heroKey: "xyz.tinycloud.artifacts/media/artifact-1/hero.png.b64",
+        audioKey: null,
+        videoKey: null,
+        sqlChanges: 1,
+      }),
+      { type: "article", slug: "fallback" },
+    );
+
+    expect(ref).toEqual({
+      type: "article",
+      slug: "with-image",
+      media: { heroImage: true, audio: false, video: false },
+    });
+  });
+
+  test("falls back to local artifact refs when publish output is not JSON", () => {
+    const fallback = {
+      type: "article",
+      slug: "local-ref",
+      media: { heroImage: true, audio: false, video: false },
+    };
+
+    expect(publishedRefFromPublishStdout("Published artifact-1", fallback)).toBe(fallback);
   });
 
   test("aggregates run-level media counts from published artifacts", () => {

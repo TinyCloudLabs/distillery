@@ -413,7 +413,7 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
     ctx.step(`publish: publishing ${label}`);
     const pub = await run(
       "bun",
-      [SKILLS.publish, artifact.dir, "--space", ctx.active.spaceId],
+      [SKILLS.publish, artifact.dir, "--space", ctx.active.spaceId, "--json"],
       "sandbox",
       {
         heartbeatMs: config.stageHeartbeatMs,
@@ -427,7 +427,10 @@ export async function runPublishStage(ctx: PipelineContext): Promise<void> {
         `publish failed for ${artifact.dir} (exit ${pub.code}): ${pub.stderr.slice(-800) || pub.stdout.slice(-800)}`,
       );
     }
-    const ref = await readArtifactRef(artifact.dir);
+    const ref = publishedRefFromPublishStdout(
+      pub.stdout,
+      (await readArtifactRef(artifact.dir)) ?? { type: artifact.type, slug: artifact.slug },
+    );
     if (ref) ctx.state.published.push(ref);
     ctx.step(`publish: ${ref ? `${ref.type}/${ref.slug}${formatMediaSummary(ref)}` : label} published`);
   }
@@ -897,6 +900,35 @@ export function formatMediaSummary(ref: PublishedRef): string {
     media.video ? "video" : null,
   ].filter(Boolean);
   return parts.length > 0 ? ` (${parts.join(", ")})` : " (no media)";
+}
+
+interface PublishJsonResult {
+  type?: unknown;
+  slug?: unknown;
+  heroKey?: unknown;
+  audioKey?: unknown;
+  videoKey?: unknown;
+}
+
+function hasNonEmptyString(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function publishedRefFromPublishStdout(stdout: string, fallback: PublishedRef): PublishedRef {
+  try {
+    const parsed = JSON.parse(stdout.trim()) as PublishJsonResult;
+    return {
+      type: hasNonEmptyString(parsed.type) ? String(parsed.type) : fallback.type,
+      slug: hasNonEmptyString(parsed.slug) ? String(parsed.slug) : fallback.slug,
+      media: {
+        heroImage: hasNonEmptyString(parsed.heroKey),
+        audio: hasNonEmptyString(parsed.audioKey),
+        video: hasNonEmptyString(parsed.videoKey),
+      },
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /** Read artifact identity + media presence off an artifact dir for published[]. */

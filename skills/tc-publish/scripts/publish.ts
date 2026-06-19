@@ -4,7 +4,7 @@
 // the hosted `applications` space: KV media first, then the SQL `feed` row.
 //
 // Usage:
-//   bun skills/tc-publish/scripts/publish.ts <artifact-dir> [--space applications]
+//   bun skills/tc-publish/scripts/publish.ts <artifact-dir> [--space applications] [--json]
 //
 // --space defaults to the profile's configured default space.
 // The publisher DID is read from the active profile (audit / replication
@@ -18,7 +18,7 @@ import { loadArtifact, publishArtifact } from "./publish-lib.ts";
 
 function usage(): never {
   console.error(
-    "usage: bun skills/tc-publish/scripts/publish.ts <artifact-dir> [--space SPACE] [--publisher-did DID]",
+    "usage: bun skills/tc-publish/scripts/publish.ts <artifact-dir> [--space SPACE] [--publisher-did DID] [--json]",
   );
   process.exit(2);
 }
@@ -26,6 +26,7 @@ function usage(): never {
 let artifactDir: string | undefined;
 let space: string | undefined;
 let publisherDid: string | undefined;
+let jsonOutput = false;
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   const arg = args[i]!;
@@ -35,6 +36,8 @@ for (let i = 0; i < args.length; i++) {
   } else if (arg === "--publisher-did") {
     publisherDid = args[++i];
     if (!publisherDid || publisherDid.startsWith("--")) usage();
+  } else if (arg === "--json") {
+    jsonOutput = true;
   } else if (arg.startsWith("--")) {
     usage();
   } else if (!artifactDir) {
@@ -62,6 +65,25 @@ try {
     space,
     publisherDid: did,
   });
+  if (jsonOutput) {
+    console.log(
+      JSON.stringify(
+        {
+          id: result.id,
+          type: artifact.type,
+          render_type: result.render_type,
+          slug: result.slug,
+          heroKey: result.heroKey ?? null,
+          audioKey: result.audioKey ?? null,
+          videoKey: result.videoKey ?? null,
+          sqlChanges: result.sqlChanges,
+        },
+        null,
+        2,
+      ),
+    );
+    process.exit(0);
+  }
   console.log(
     `Published ${result.id} (type=${artifact.type} render=${result.render_type} slug=${result.slug})`,
   );
