@@ -142,7 +142,7 @@ describe("agent runner generation prompt", () => {
   }
 
   test("prioritizes a publishable Feed artifact before approval-held drafts", () => {
-    const args = withMediaEnv({}, () =>
+    const args = withMediaEnv({ GEMINI_API_KEY: "test-key" }, () =>
       buildGenerationArgs("/tmp/corpus", "/tmp/artifacts", ["/tmp/corpus/demo.md"]),
     );
     const systemPrompt = String(args[args.indexOf("--system-prompt") + 1]);
@@ -159,20 +159,24 @@ describe("agent runner generation prompt", () => {
     expect(systemPrompt).toContain("hot-take");
     expect(systemPrompt).toContain("write-article");
     expect(systemPrompt).toContain("make-podcast");
+    expect(systemPrompt).toContain("synthesize.ts");
+    expect(systemPrompt).toContain("--audio");
     expect(systemPrompt).toContain("extract-insights");
     expect(systemPrompt).toContain("person-brief");
-    expect(systemPrompt).toContain("HERO IMAGES SKIPPED");
+    expect(systemPrompt).toContain("HERO IMAGES");
     expect(systemPrompt).toContain("Social posts are held for approval and will not fill Feed");
     expect(userPrompt).toContain("up to 3 publishable internal artifacts for the Feed");
     expect(userPrompt).toContain("optionally one approval-held social-post draft");
   });
 
-  test("asks for real hero images only when a Gemini image provider is configured", () => {
+  test("asks for real hero images and podcasts only when a Gemini provider is configured", () => {
     const skippedArgs = withMediaEnv({}, () =>
       buildGenerationArgs("/tmp/corpus", "/tmp/artifacts", ["/tmp/corpus/demo.md"]),
     );
     const skipped = String(skippedArgs[skippedArgs.indexOf("--system-prompt") + 1]);
     expect(skipped).toContain("HERO IMAGES SKIPPED");
+    expect(skipped).toContain("PODCAST AUDIO SKIPPED");
+    expect(skipped).not.toContain("synthesize.ts");
 
     const enabledArgs = withMediaEnv({ GEMINI_API_KEY: "test-key" }, () =>
       buildGenerationArgs("/tmp/corpus", "/tmp/artifacts", ["/tmp/corpus/demo.md"]),
@@ -181,6 +185,9 @@ describe("agent runner generation prompt", () => {
     expect(enabled).toContain("HERO IMAGES");
     expect(enabled).toContain("skills/illustrate-card/SKILL.md");
     expect(enabled).toContain("skills/illustrate-card/scripts/illustrate.ts");
+    expect(enabled).toContain("make-podcast");
+    expect(enabled).toContain("skills/make-podcast/SKILL.md");
+    expect(enabled).toContain("synthesize.ts");
   });
 });
 

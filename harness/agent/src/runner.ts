@@ -433,11 +433,28 @@ export function buildGenerationArgs(
   transcripts: string[],
 ): string[] {
   const targetArtifacts = config.targetArtifacts;
-  const imageEnabled = Boolean(
+  const geminiEnabled = Boolean(
     process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
   );
   const videoEnabled = process.env.AGENT_ENABLE_VIDEO === "1" && Boolean(process.env.FAL_KEY);
-  const imageStep = imageEnabled
+  const podcastStep = geminiEnabled
+    ? [
+        "   - make-podcast for a sustained through-line that benefits from a short",
+        "     narrated audio artifact. Read skills/make-podcast/SKILL.md and follow",
+        "     the full audio-producing path: digest + novelty/narrative-seed scan,",
+        "     write script.md, verify quotes with --stamp, run synthesize.ts to",
+        "     create episode.wav, then save with:",
+        "     bun skills/make-podcast/scripts/save.ts <artifact.json> --audio",
+        `     episode.wav --script script.md --out-dir ${artifactsDir}`,
+        "     Do not create a podcast artifact unless it has real synthesized audio",
+        "     and a saved `audio` file.",
+      ]
+    : [
+        "   - PODCAST AUDIO SKIPPED: no Gemini provider is configured in this",
+        "     generate environment. Do not create podcast artifacts or audio-less",
+        "     podcast shells.",
+      ];
+  const imageStep = geminiEnabled
     ? [
         "   HERO IMAGES: after saving each publishable artifact, try to add a",
         "   real hero image with skills/illustrate-card when the artifact has a",
@@ -495,9 +512,7 @@ export function buildGenerationArgs(
     "   - hot-take for compact, quote-anchored internal takes that can fill the",
     "     Feed quickly. Save with skills/hot-take/scripts/save.ts.",
     "   - write-article for the strongest through-line or narrative.",
-    "   - make-podcast for a sustained through-line that benefits from a short",
-    "     narrated audio artifact. Save with skills/make-podcast/scripts/save.ts",
-    "     so the artifact carries an `audio` file next to artifact.json.",
+    ...podcastStep,
     "   - extract-insights for compact non-obvious claims/decisions.",
     "   - person-brief only when a recurring person is salient and every claim is",
     "     grounded. Skip it if identity/role evidence is thin.",
