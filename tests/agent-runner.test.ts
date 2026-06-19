@@ -18,6 +18,7 @@ import {
   formatDuration,
   formatHeartbeatInfo,
   formatMediaSummary,
+  preflightArtifactMediaForPublish,
   publishedRefFromPublishStdout,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
@@ -507,5 +508,56 @@ describe("agent runner artifact media preflight", () => {
 
     expect(warnings).toEqual([]);
     expect((await readArtifact(dir)).hero_image).toBe("hero.png");
+  });
+
+  test("strips missing optional audio before publish", async () => {
+    const artifact = { type: "article", slug: "optional-audio", audio: "missing.m4a" };
+    const dir = await tempArtifactDir(artifact);
+
+    const result = await preflightArtifactMediaForPublish(dir, artifact);
+
+    expect(result.blockReason).toBeUndefined();
+    expect(result.warnings).toEqual(['audio stripped: missing file "missing.m4a"']);
+    expect((await readArtifact(dir)).audio).toBeUndefined();
+  });
+
+  test("blocks a podcast without valid audio instead of publishing a shell", async () => {
+    const artifact = { type: "podcast", slug: "fake-podcast", audio: "missing.m4a" };
+    const dir = await tempArtifactDir(artifact);
+
+    const result = await preflightArtifactMediaForPublish(dir, artifact);
+
+    expect(result.blockReason).toBe('audio required for podcast but missing file "missing.m4a"');
+    expect(result.warnings).toEqual(['audio invalid: missing file "missing.m4a"']);
+    expect((await readArtifact(dir)).audio).toBe("missing.m4a");
+  });
+
+  test("keeps a podcast with valid m4a audio", async () => {
+    const artifact = { type: "podcast", slug: "real-podcast", audio: "episode.m4a" };
+    const dir = await tempArtifactDir(artifact);
+    await writeFile(
+      join(dir, "episode.m4a"),
+      new Uint8Array([
+        0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70,
+        0x4d, 0x34, 0x41, 0x20, 0x00, 0x00, 0x00, 0x00,
+      ]),
+    );
+
+    const result = await preflightArtifactMediaForPublish(dir, artifact);
+
+    expect(result.blockReason).toBeUndefined();
+    expect(result.warnings).toEqual([]);
+    expect((await readArtifact(dir)).audio).toBe("episode.m4a");
+  });
+
+  test("blocks a clip without valid video before tc-publish", async () => {
+    const artifact = { type: "clip", slug: "fake-clip", video: "missing.mp4" };
+    const dir = await tempArtifactDir(artifact);
+
+    const result = await preflightArtifactMediaForPublish(dir, artifact);
+
+    expect(result.blockReason).toBe('video required for clip but missing file "missing.mp4"');
+    expect(result.warnings).toEqual(['video invalid: missing file "missing.mp4"']);
+    expect((await readArtifact(dir)).video).toBe("missing.mp4");
   });
 });

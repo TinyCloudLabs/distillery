@@ -772,6 +772,11 @@ interface ReadArtifactRouteOptions {
   preflightMedia?: boolean;
 }
 
+interface ArtifactMediaPreflight {
+  warnings: string[];
+  blockReason?: string;
+}
+
 function isArtifactType(type: string): type is ArtifactType {
   return (ARTIFACT_TYPES as readonly string[]).includes(type);
 }
@@ -906,9 +911,9 @@ async function readArtifactRoute(
       approval_status?: unknown;
       hero_image?: unknown;
     } & Record<string, unknown>;
-    const mediaWarnings = options.preflightMedia
-      ? await sanitizeArtifactMediaForPublish(dir, artifact)
-      : [];
+    const media = options.preflightMedia
+      ? await preflightArtifactMediaForPublish(dir, artifact)
+      : { warnings: [] };
     const fallback = await readArtifactRef(dir);
     const type =
       typeof artifact.type === "string" ? artifact.type : fallback?.type ?? "unknown";
@@ -927,9 +932,9 @@ async function readArtifactRoute(
       slug,
       audience,
       approval_status,
-      publish: decision.publish,
-      reason: decision.reason,
-      mediaWarnings,
+      publish: decision.publish && !media.blockReason,
+      reason: decision.reason ?? media.blockReason,
+      mediaWarnings: media.warnings,
     };
   } catch {
     return null;
@@ -940,40 +945,100 @@ export async function sanitizeArtifactMediaForPublish(
   dir: string,
   artifact: Record<string, unknown>,
 ): Promise<string[]> {
-  const warnings: string[] = [];
-  if (!Object.prototype.hasOwnProperty.call(artifact, "hero_image")) {
-    return warnings;
-  }
+  return (await preflightArtifactMediaForPublish(dir, artifact)).warnings;
+}
 
-  const stripHero = (reason: string) => {
-    delete artifact.hero_image;
-    warnings.push(`hero_image stripped: ${reason}`);
+export async function preflightArtifactMediaForPublish(
+  dir: string,
+  artifact: Record<string, unknown>,
+): Promise<ArtifactMediaPreflight> {
+  const warnings: string[] = [];
+  const type = typeof artifact.type === "string" ? artifact.type : "unknown";
+  let changed = false;
+  let blockReason: string | undefined;
+
+  const stripField = (field: "hero_image" | "audio" | "video", reason: string) => {
+    delete artifact[field];
+    changed = true;
+    warnings.push(`${field} stripped: ${reason}`);
   };
 
-  const hero = artifact.hero_image;
-  if (typeof hero !== "string" || hero.trim().length === 0) {
-    stripHero("empty or non-string value");
-  } else {
-    const unsafeReason = unsafeMediaFileName(hero);
-    if (unsafeReason) {
-      stripHero(unsafeReason);
-    } else {
-      let bytes: Uint8Array | undefined;
-      try {
-        bytes = new Uint8Array(await readFile(join(dir, hero)));
-      } catch {
-        stripHero(`missing file ${JSON.stringify(hero)}`);
-      }
-      if (bytes && !isSupportedImage(hero, bytes)) {
-        stripHero(`unsupported or invalid image bytes ${JSON.stringify(hero)}`);
-      }
+  const blockRequired = (field: "audio" | "video", reason: string) => {
+    blockReason ??= `${field} required for ${type} but ${reason}`;
+    warnings.push(`${field} invalid: ${reason}`);
+  };
+
+  const checkOptional = async (
+    field: "hero_image" | "audio" | "video",
+    validate: (name: string, bytes: Uint8Array) => boolean,
+    label: string,
+  ) => {
+    if (!Object.prototype.hasOwnProperty.call(artifact, field)) return;
+    const value = artifact[field];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      stripField(field, "empty or non-string value");
+      return;
     }
+    const unsafeReason = unsafeMediaFileName(value);
+    if (unsafeReason) {
+      stripField(field, unsafeReason);
+      return;
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await readFile(join(dir, value)));
+    } catch {
+      stripField(field, `missing file ${JSON.stringify(value)}`);
+      return;
+    }
+    if (!validate(value, bytes)) {
+      stripField(field, `unsupported or invalid ${label} bytes ${JSON.stringify(value)}`);
+    }
+  };
+
+  const checkRequired = async (
+    field: "audio" | "video",
+    validate: (name: string, bytes: Uint8Array) => boolean,
+    label: string,
+  ) => {
+    const value = artifact[field];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      blockRequired(field, "the field is missing or empty");
+      return;
+    }
+    const unsafeReason = unsafeMediaFileName(value);
+    if (unsafeReason) {
+      blockRequired(field, unsafeReason);
+      return;
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await readFile(join(dir, value)));
+    } catch {
+      blockRequired(field, `missing file ${JSON.stringify(value)}`);
+      return;
+    }
+    if (!validate(value, bytes)) {
+      blockRequired(field, `unsupported or invalid ${label} bytes ${JSON.stringify(value)}`);
+    }
+  };
+
+  await checkOptional("hero_image", isSupportedImage, "image");
+  if (type === "podcast") {
+    await checkRequired("audio", isSupportedAudio, "audio");
+  } else {
+    await checkOptional("audio", isSupportedAudio, "audio");
+  }
+  if (type === "clip") {
+    await checkRequired("video", isSupportedVideo, "video");
+  } else {
+    await checkOptional("video", isSupportedVideo, "video");
   }
 
-  if (warnings.length > 0) {
+  if (changed) {
     await writeFile(join(dir, "artifact.json"), `${JSON.stringify(artifact, null, 2)}\n`);
   }
-  return warnings;
+  return { warnings, blockReason };
 }
 
 function unsafeMediaFileName(name: string): string | null {
@@ -1021,6 +1086,51 @@ function isSupportedImage(name: string, bytes: Uint8Array): boolean {
     return bytes.length >= 10 && (header === "GIF87a" || header === "GIF89a");
   }
   return false;
+}
+
+function isSupportedAudio(name: string, bytes: Uint8Array): boolean {
+  const ext = name.split(".").pop()?.toLowerCase();
+  if (ext === "wav") {
+    return bytes.length >= 12 && ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 12) === "WAVE";
+  }
+  if (ext === "mp3") {
+    return (
+      bytes.length >= 3 &&
+      (ascii(bytes, 0, 3) === "ID3" || (bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xe0) === 0xe0))
+    );
+  }
+  if (ext === "m4a" || ext === "mp4") {
+    return isIsoBaseMedia(bytes);
+  }
+  if (ext === "ogg") {
+    return bytes.length >= 4 && ascii(bytes, 0, 4) === "OggS";
+  }
+  return false;
+}
+
+function isSupportedVideo(name: string, bytes: Uint8Array): boolean {
+  const ext = name.split(".").pop()?.toLowerCase();
+  if (ext === "mp4" || ext === "mov") {
+    return isIsoBaseMedia(bytes);
+  }
+  if (ext === "webm") {
+    return (
+      bytes.length >= 4 &&
+      bytes[0] === 0x1a &&
+      bytes[1] === 0x45 &&
+      bytes[2] === 0xdf &&
+      bytes[3] === 0xa3
+    );
+  }
+  return false;
+}
+
+function isIsoBaseMedia(bytes: Uint8Array): boolean {
+  return bytes.length >= 12 && ascii(bytes, 4, 8) === "ftyp";
+}
+
+function ascii(bytes: Uint8Array, start: number, end: number): string {
+  return String.fromCharCode(...bytes.slice(start, end));
 }
 
 async function listArtifactRoutes(

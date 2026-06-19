@@ -207,10 +207,15 @@ run scratch.
    `xyz.tinycloud.artifacts` (KV media + SQL feed row, `approval_status='approved'`)
    and emits the written media keys for run-status observability.
 
-Before publish, the runner preflights optional `hero_image` references. Empty,
-unsafe, missing, or non-image hero files are stripped from `artifact.json` and
-logged in the run status so the article can still publish without a broken Feed
-image. Audio/video media remain fail-fast in `tc-publish`.
+Before publish, the runner preflights local media references. Empty, unsafe,
+missing, or unsupported optional media (`hero_image`, plus incidental audio/video
+on non-rich artifacts) is stripped from `artifact.json` and logged in the run
+status so the artifact can still publish without broken Feed media. Required
+rich-media artifacts are stricter: `podcast` must carry valid local audio and
+`clip` must carry valid local video, or the artifact is held with a clear media
+reason before `tc-publish` runs. This prevents one audio-less podcast shell or
+missing-video clip from failing the whole publish stage after other artifacts are
+ready.
 
 **Publish-only — no schema bootstrap (team decision, 2026-06-14).** The agent's
 delegation is intentionally minimal: Listen `[read]`, `artifacts/feed`
