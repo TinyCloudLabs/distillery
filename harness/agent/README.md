@@ -216,6 +216,7 @@ development checks, run:
 
 ```sh
 bun run smithers:doctor
+bun run smithers:ps
 bun run smithers:dev-mode
 bun run smithers:agent-run
 bun run smithers:agent-run:staged
@@ -225,6 +226,23 @@ bun run smithers:agent-run:staged
 `preflight → listen → generate → publish → cleanup`. It remains an operator/dev
 entry point until the HTTP endpoint delegates to Smithers task execution safely;
 it already shares the same cross-process run lock as `/agent/run`.
+
+If Smithers reports a stale `running` workflow, inspect before launching more
+agent work:
+
+```sh
+bun run smithers:ps
+bun run smithers:why -- <run-id>
+bunx smithers-orchestrator inspect <run-id>
+bun run smithers:cancel -- <run-id>
+```
+
+Cancel only after the run is clearly stale/failed. A common sandbox-local case
+is `agent-run-staged` failing preflight with `EPERM` on
+`~/.tinycloud-agent-runs/agent-run.lock`; cancelling clears the Smithers run
+record, while the Artifactory runner lock remains visible through
+`GET /agent/runs`. If `cancel` exits non-zero but prints
+`"status":"cancelled"`, verify with `bun run smithers:ps`.
 
 ## Runtime state — TWO separate roots, both outside the repo, dir mode `0700`
 

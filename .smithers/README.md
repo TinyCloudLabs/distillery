@@ -8,6 +8,7 @@ Useful commands:
 ```sh
 bun run smithers:doctor
 bun run smithers:list
+bun run smithers:ps
 bun run smithers:dev-mode
 bun run smithers:agent-run
 bun run smithers:agent-run:staged
@@ -59,3 +60,24 @@ stage-level logs and retry/replay boundaries. A cold graph initially shows only
 
 The generated Smithers pack intentionally keeps secrets out of git. Local API
 keys are a development bridge only; the target home is TinyCloud Secret Manager.
+
+## Stale run triage
+
+Smithers can leave a run with `dbStatus: running` after a sandbox or process
+interruption. Treat this as operator backpressure: inspect before starting more
+agent work.
+
+```sh
+bun run smithers:ps
+bun run smithers:why -- <run-id>
+bunx smithers-orchestrator inspect <run-id>
+bun run smithers:cancel -- <run-id>
+```
+
+Cancel only after `why`/`inspect` show the run is stale, failed, or no longer
+has active work to preserve. A common local-dev case is a stale
+`agent-run-staged` preflight blocked by sandbox permissions on
+`~/.tinycloud-agent-runs/agent-run.lock`; cancelling clears Smithers' local run
+table, while the Artifactory runner lock remains governed separately by
+`GET /agent/runs`. If `cancel` exits non-zero but prints
+`"status":"cancelled"`, verify with `bun run smithers:ps`.
