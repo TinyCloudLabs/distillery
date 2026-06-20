@@ -25,6 +25,7 @@
     "smithers:agent-run": "bunx smithers-orchestrator workflow run agent-run",
     "smithers:agent-run:staged": "bunx smithers-orchestrator workflow run agent-run-staged",
     "smithers:artifact-types": "bunx smithers-orchestrator workflow run artifact-type-smoke",
+    "smithers:video-smoke": "bunx smithers-orchestrator workflow run video-generation-smoke",
     "smithers:composition": "bunx smithers-orchestrator workflow run feed-composition-smoke",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit"

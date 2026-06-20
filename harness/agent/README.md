@@ -307,6 +307,17 @@ valid video file. The generate stage also gets a longer Smithers heartbeat windo
 and a single attempt, so long video work is not retried halfway through and
 duplicated.
 
+To prove provider plumbing without the transcript/editorial gate, use the direct
+video smoke. It bypasses Claude, creates two local reference PNGs with ffmpeg,
+uploads them to FAL storage, runs Seedance at the cheapest settings
+(`duration=4`, `resolution=480p`, no audio), downloads the MP4, and writes a
+report:
+
+```sh
+bun skills/make-clip/scripts/video-smoke.ts --out-dir /tmp/video-smoke --keep
+bun run smithers:video-smoke
+```
+
 `artifactType` defaults to `"auto"` and may be any value in the artifact
 registry. This is deliberately a quality-gated bias, not a quota: the runner
 adds target-specific instructions to the generation prompt, but it still tells

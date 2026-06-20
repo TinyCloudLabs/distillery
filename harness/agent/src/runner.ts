@@ -751,11 +751,10 @@ export function buildMediaFocusStep(
     return providers.videoEnabled
       ? [
           "MEDIA FOCUS: this run is intentionally trying to prove the video",
-          "clip path. Before filling the run with cards/articles, look for ONE",
-          "unusually visual, emotionally legible reversal worth make-clip spend.",
-          "If it clears the clip bar, make that clip the first publishable",
-          "artifact. If no real clip lead exists, say so in the final summary",
-          "and continue with ordinary publishable artifacts.",
+          "clip path. Treat this as an operator proof of the media pipeline:",
+          "prefer a clear, simple, transcript-grounded visual metaphor over a",
+          "perfect editorial short. Try to produce ONE make-clip artifact before",
+          "filling the run with text cards.",
         ]
       : [
           "MEDIA FOCUS REQUESTED: video, but FAL_KEY and AGENT_ENABLE_VIDEO=1",
@@ -807,12 +806,11 @@ export function buildTargetArtifactTypeStep(target?: ArtifactType): string[] {
     case "clip":
       return [
         ...common,
-        "Try `make-clip` before text-only artifacts when AGENT_ENABLE_VIDEO=1 +",
-        "FAL_KEY are available and the material contains a genuinely visual",
-        "reversal worth video spend. For a clip-targeted operator proof, do not",
-        "fill the run with text-only artifacts as a substitute for a missing",
-        "clip; if no clip clears the bar, say why and leave the proof to fail",
-        "explicitly before publish.",
+        "This is an operator proof of the clip pipeline. Try `make-clip` before",
+        "text-only artifacts when AGENT_ENABLE_VIDEO=1 + FAL_KEY are available.",
+        "Use the clearest transcript-grounded visual metaphor you can find; do",
+        "not require a perfect editorial reversal before proving the media path.",
+        "Text-only artifacts are not a substitute for this target.",
       ];
     case "digest":
       return [
@@ -933,17 +931,28 @@ export function buildGenerationArgs(
         "   generate environment. Leave hero_image unset; do not create placeholder",
         "   or fallback graphics.",
       ];
+  const clipProof = options.targetArtifactType === "clip";
   const videoStep = videoEnabled
-    ? [
-        "4. OPTIONAL CLIP (make-clip): only if the corpus contains one unusually",
-        "   visual, emotionally legible reversal worth spending video on. Read",
-        "   skills/make-clip/SKILL.md and follow its speculative mode. Produce at",
-        "   most ONE contract-valid `clip` artifact with `video` set to the",
-        "   captioned mp4 file name and `hero_image` set to poster.png. Use",
-        "   --out-dir " + artifactsDir + " when saving. Zero clips is valid and",
-        "   preferred over a mediocre clip.",
-        "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
-      ]
+    ? clipProof
+      ? [
+          "4. REQUIRED CLIP PROOF (make-clip): this run is explicitly testing",
+          "   video generation. Read skills/make-clip/SKILL.md and follow its",
+          "   speculative mode. Produce ONE contract-valid `clip` artifact with",
+          "   `video` set to the mp4 file name and `hero_image` set to poster.png.",
+          "   Use --out-dir " + artifactsDir + " when saving. Keep it simple:",
+          "   a clear transcript-grounded metaphor is enough for this proof.",
+          "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
+        ]
+      : [
+          "4. OPTIONAL CLIP (make-clip): only if the corpus contains one unusually",
+          "   visual, emotionally legible reversal worth spending video on. Read",
+          "   skills/make-clip/SKILL.md and follow its speculative mode. Produce at",
+          "   most ONE contract-valid `clip` artifact with `video` set to the",
+          "   captioned mp4 file name and `hero_image` set to poster.png. Use",
+          "   --out-dir " + artifactsDir + " when saving. Zero clips is valid and",
+          "   preferred over a mediocre clip.",
+          "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
+        ]
     : [
         "4. VIDEO SKIPPED: do NOT run make-clip in this run. It requires",
         "   AGENT_ENABLE_VIDEO=1 and FAL_KEY because it is slower and spend-bearing.",
@@ -1016,11 +1025,16 @@ export function buildGenerationArgs(
     `When finished, print: SAVED <n> artifacts under ${artifactsDir}, then stop.`,
   ].join("\n");
 
+  const userLead =
+    clipProof && videoEnabled
+      ? `Distill the ${transcripts.length} transcript(s) in ${corpusDir} into one ` +
+        `required video clip proof first, then optional supporting Feed artifacts, `
+      : `Distill the ${transcripts.length} transcript(s) in ${corpusDir} into up to ` +
+        `${targetArtifacts} publishable internal artifacts for the Feed, then optionally one ` +
+        `approval-held social-post draft` +
+        `${videoEnabled ? ", plus at most one excellent clip if justified" : ""}, `;
   const user =
-    `Distill the ${transcripts.length} transcript(s) in ${corpusDir} into up to ` +
-    `${targetArtifacts} publishable internal artifacts for the Feed, then optionally one ` +
-    `approval-held social-post draft` +
-    `${videoEnabled ? ", plus at most one excellent clip if justified" : ""}, ` +
+    userLead +
     `save the survivors under ${artifactsDir} (do NOT publish), ` +
     `then print a one-line summary.`;
 
