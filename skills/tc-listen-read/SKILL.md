@@ -31,13 +31,16 @@ canonical data lives in the **owner's `applications` space**:
 ## Procedure
 
 ```sh
-bun skills/tc-listen-read/scripts/listen-read.ts --out <corpus-dir> [--count 5] [--space <owner-space>]
+bun skills/tc-listen-read/scripts/listen-read.ts --out <corpus-dir> [--count 5] [--offset 0] [--space <owner-space>]
 ```
 
 `--space` defaults to the profile's configured default space. To read a Listen
 space owned by a **different** identity, pass the owner's space URI
 (`tinycloud:pkh:eip155:1:<owner-addr>:applications`) and hold a delegation for
 it. Writes one markdown file per non-empty transcript and lists what it wrote.
+`--offset` starts the newest-first conversation scan later in the Listen list;
+the live Feed agent uses it for run-to-run rotation so repeated generations do
+not always read the same latest transcript window.
 
 ### Emit the delegation request the owner grants (one command)
 

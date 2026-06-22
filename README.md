@@ -256,6 +256,10 @@ skills continuously and decides what happens to their output. It is the
   writes `mix-plan.md`, and reserves one publishable slot for a Gemini/Veo clip
   attempt unless another explicit target takes priority. If no video ships, the
   run must state why instead of silently filling the feed with text artifacts.
+  The live agent also persists a small Listen read cursor outside the repo and
+  passes `--offset` into `tc-listen-read`, so repeated Feed-triggered runs rotate
+  through transcript windows instead of reusing the same latest conversations
+  every time.
   Before publish it stamps `raw_artifact.producer` with run/delegation
   provenance so Feed cards can show which delegated run produced each durable
   artifact.

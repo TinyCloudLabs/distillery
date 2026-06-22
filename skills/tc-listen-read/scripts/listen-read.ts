@@ -5,7 +5,7 @@
 //
 // Usage:
 //   bun skills/tc-listen-read/scripts/listen-read.ts \
-//     --out <corpus-dir> [--count 5] [--space <owner-applications-space>]
+//     --out <corpus-dir> [--count 5] [--offset 0] [--space <owner-applications-space>]
 //
 //   # emit the delegation request the OWNER grants (then re-run the read):
 //   bun skills/tc-listen-read/scripts/listen-read.ts \
@@ -34,7 +34,7 @@ const DEFAULT_REQUEST_FILE = "./listen-read-request.json";
 function usage(): never {
   console.error(
     "usage:\n" +
-      "  read:  bun .../listen-read.ts --out DIR [--count N] [--space SPACE] [--profile NAME] [--owner-space URI]\n" +
+      "  read:  bun .../listen-read.ts --out DIR [--count N] [--offset N] [--space SPACE] [--profile NAME] [--owner-space URI]\n" +
       "  emit:  bun .../listen-read.ts --emit-request [FILE] --owner-space URI",
   );
   process.exit(2);
@@ -42,6 +42,7 @@ function usage(): never {
 
 let outDir: string | undefined;
 let count = 5;
+let offset = 0;
 let space: string | undefined;
 let ownerSpace: string | undefined;
 let profile: string | undefined;
@@ -57,6 +58,9 @@ for (let i = 0; i < args.length; i++) {
   } else if (arg === "--count") {
     count = Number(args[++i]);
     if (!Number.isInteger(count) || count <= 0) usage();
+  } else if (arg === "--offset") {
+    offset = Number(args[++i]);
+    if (!Number.isInteger(offset) || offset < 0) usage();
   } else if (arg === "--space") {
     space = args[++i];
     if (!space || space.startsWith("--")) usage();
@@ -161,7 +165,7 @@ async function surfaceAccessRemediation(e: TcCliError): Promise<void> {
 }
 
 try {
-  const written = await dumpCorpus(count, outDir, { space }, { profile });
+  const written = await dumpCorpus(count, outDir, { space }, { profile }, { offset });
   if (written.length === 0) {
     console.error(
       "No non-empty transcripts found. Nothing written. (Check the conversation count / space.)",

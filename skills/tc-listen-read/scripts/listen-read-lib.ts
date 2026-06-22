@@ -389,6 +389,13 @@ export interface WrittenTranscript {
   turnCount: number;
 }
 
+export interface DumpCorpusOptions {
+  /** Initial conversation-list offset. Used by the live agent to rotate runs. */
+  offset?: number;
+  /** Maximum number of conversation metadata rows to scan from the initial offset. */
+  scanLimit?: number;
+}
+
 /**
  * Read `count` recent conversations + their transcripts and write each as a
  * markdown file into `corpusDir`. Returns what was written (for the fetch node
@@ -399,6 +406,7 @@ export async function dumpCorpus(
   corpusDir: string,
   target: ListenTarget,
   opts: TcRunOptions = {},
+  options: DumpCorpusOptions = {},
 ): Promise<WrittenTranscript[]> {
   await mkdir(corpusDir, { recursive: true });
   // Different import paths store transcripts in different places. The importer
@@ -414,9 +422,14 @@ export async function dumpCorpus(
   // SELECT * across a broad scan exceeds TinyCloud's SQL response cap before the
   // pipeline gets a chance to apply backpressure.
   const CONVERSATION_PAGE_SIZE = 100;
-  const CONVERSATION_SCAN_LIMIT = 10_000;
+  const startOffset = Math.max(0, Math.floor(options.offset ?? 0));
+  const CONVERSATION_SCAN_LIMIT = Math.max(1, Math.floor(options.scanLimit ?? 10_000));
   const written: WrittenTranscript[] = [];
-  for (let offset = 0; offset < CONVERSATION_SCAN_LIMIT && written.length < count; offset += CONVERSATION_PAGE_SIZE) {
+  for (
+    let offset = startOffset;
+    offset < startOffset + CONVERSATION_SCAN_LIMIT && written.length < count;
+    offset += CONVERSATION_PAGE_SIZE
+  ) {
     const conversations = await listConversations(CONVERSATION_PAGE_SIZE, target, opts, offset);
     if (conversations.length === 0) break;
     for (const meta of conversations) {

@@ -156,6 +156,23 @@ function positiveIntegerEnv(name: string, fallback: number): number {
   return Math.floor(value);
 }
 
+function nonNegativeIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return fallback;
+  return Math.floor(value);
+}
+
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
 export const config = {
   /** The distillery checkout the skills run from (cwd of every skill spawn). */
   repoRoot,
@@ -200,7 +217,13 @@ export const config = {
   /** Advertised delegation lifetime (informational, for GET /agent/info). */
   delegationExpiry: process.env.AGENT_DELEGATION_EXPIRY ?? "7d",
   /** How many Listen transcripts a run pulls. */
-  transcriptCount: Number(process.env.AGENT_TRANSCRIPT_COUNT ?? 5),
+  transcriptCount: positiveIntegerEnv("AGENT_TRANSCRIPT_COUNT", 5),
+  /** Initial manual Listen offset. Used when transcript rotation is disabled. */
+  transcriptOffset: nonNegativeIntegerEnv("AGENT_TRANSCRIPT_OFFSET", 0),
+  /** Rotate the live agent through Listen pages instead of always reading newest N. */
+  transcriptRotation: booleanEnv("AGENT_TRANSCRIPT_ROTATION", true),
+  /** Durable non-secret cursor for rotating Listen transcript windows across runs. */
+  listenReadCursorPath: resolve(runsDir, "listen-read-cursor.json"),
   /** Target number of publishable, Feed-visible artifacts per run. */
   targetArtifacts: positiveIntegerEnv("AGENT_TARGET_ARTIFACTS", 3),
   /** Optional dev/operator posture for proving richer media paths. */

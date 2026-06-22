@@ -14,6 +14,7 @@ import {
   buildArtifactMixPlanStep,
   buildGenerationArgs,
   buildInteractionBackpressureStep,
+  buildListenReadArgs,
   buildMediaFocusStep,
   buildTargetArtifactTypeStep,
   createPipelineContext,
@@ -23,6 +24,8 @@ import {
   formatMediaSummary,
   preflightArtifactMediaForPublish,
   publishedRefFromPublishStdout,
+  nextListenReadOffset,
+  parseListenReadCursor,
   runPublishStage,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
@@ -74,6 +77,28 @@ describe("agent runner listen-read classification", () => {
     expect(classifyListenReadResult({ code: 0, stdout: "", stderr: "" })).toEqual({
       kind: "ok",
     });
+  });
+
+  test("builds listen-read args with an explicit offset", () => {
+    expect(buildListenReadArgs("/tmp/corpus", 5, "space-id", 12)).toEqual([
+      "skills/tc-listen-read/scripts/listen-read.ts",
+      "--out",
+      "/tmp/corpus",
+      "--count",
+      "5",
+      "--offset",
+      "12",
+      "--space",
+      "space-id",
+    ]);
+  });
+
+  test("parses and advances the listen-read cursor defensively", () => {
+    expect(parseListenReadCursor(JSON.stringify({ nextOffset: 10 }))).toBe(10);
+    expect(parseListenReadCursor(JSON.stringify({ nextOffset: -1 }))).toBe(0);
+    expect(parseListenReadCursor("not json")).toBe(0);
+    expect(nextListenReadOffset(10, 5)).toBe(15);
+    expect(nextListenReadOffset(-1, 5)).toBe(5);
   });
 });
 

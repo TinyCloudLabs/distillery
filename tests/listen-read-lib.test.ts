@@ -97,4 +97,9 @@ describe("tc-listen-read SQL backpressure", () => {
       }),
     ).toThrow("unsafe SQL column name");
   });
+
+  test("conversation list query remains offset-addressable for run rotation", () => {
+    const columns = mapConversationColumns(["id"]);
+    expect(conversationListSql(columns)).toEndWith("LIMIT ? OFFSET ?");
+  });
 });

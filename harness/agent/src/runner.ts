@@ -142,6 +142,44 @@ export type ListenReadStageResult =
   | { kind: "ready"; transcripts: string[] }
   | { kind: "empty" };
 
+interface ListenReadCursor {
+  nextOffset: number;
+  updatedAt?: string;
+  lastRunId?: string;
+}
+
+export function parseListenReadCursor(raw: string): number {
+  try {
+    const parsed = JSON.parse(raw) as Partial<ListenReadCursor>;
+    const nextOffset = parsed.nextOffset;
+    return typeof nextOffset === "number" && Number.isInteger(nextOffset) && nextOffset >= 0
+      ? nextOffset
+      : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function nextListenReadOffset(offset: number, transcriptCount: number): number {
+  const safeOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
+  const safeCount = Number.isInteger(transcriptCount) && transcriptCount > 0 ? transcriptCount : 1;
+  return safeOffset + safeCount;
+}
+
+export function buildListenReadArgs(corpusDir: string, count: number, space: string, offset: number): string[] {
+  return [
+    SKILLS.listenRead,
+    "--out",
+    corpusDir,
+    "--count",
+    String(count),
+    "--offset",
+    String(Math.max(0, Math.floor(offset))),
+    "--space",
+    space,
+  ];
+}
+
 /**
  * Run a command from the repo root.
  *
@@ -462,29 +500,33 @@ export async function prepareRunScratch(ctx: PipelineContext): Promise<void> {
 export async function runListenReadStage(ctx: PipelineContext): Promise<ListenReadStageResult> {
   // LISTEN-READ — pull the user's transcripts into a per-run corpus. EMPTY-SAFE:
   // exit 1 + "No non-empty transcripts" → 0 transcripts → valid, done.
-  ctx.step("listen-read: fetching the user's Listen transcripts");
-  const read = await run(
-    "bun",
-    [
-      SKILLS.listenRead,
-      "--out",
-      ctx.corpusDir,
-      "--count",
-      String(config.transcriptCount),
-      "--space",
-      ctx.space,
-    ],
-    "sandbox",
-    {
-      heartbeatMs: config.stageHeartbeatMs,
-      onHeartbeat: () => {
-        ctx.step("listen-read: still fetching transcripts");
-      },
-    },
+  const configuredOffset = config.transcriptRotation
+    ? await readListenReadCursor()
+    : config.transcriptOffset;
+  let usedOffset = configuredOffset;
+  ctx.step(
+    `listen-read: fetching the user's Listen transcripts ` +
+      `(count ${config.transcriptCount}, offset ${configuredOffset})`,
   );
+  let read = await executeListenRead(ctx, configuredOffset);
+  logListenReadOutput(ctx, read);
 
-  const transcripts = await listCorpus(ctx.corpusDir);
-  const readOutcome = classifyListenReadResult(read);
+  let transcripts = await listCorpus(ctx.corpusDir);
+  let readOutcome = classifyListenReadResult(read);
+  if (
+    configuredOffset > 0 &&
+    transcripts.length === 0 &&
+    readOutcome.kind !== "error"
+  ) {
+    ctx.step(`listen-read: offset ${configuredOffset} returned no transcripts; retrying from offset 0`);
+    await rm(ctx.corpusDir, { recursive: true, force: true });
+    await mkdir(ctx.corpusDir, { recursive: true, mode: 0o700 });
+    usedOffset = 0;
+    read = await executeListenRead(ctx, 0);
+    logListenReadOutput(ctx, read);
+    transcripts = await listCorpus(ctx.corpusDir);
+    readOutcome = classifyListenReadResult(read);
+  }
   if (readOutcome.kind === "error") {
     const code = readOutcome.code ? `${readOutcome.code}: ` : "";
     ctx.step(`listen-read: failed (${code}${readOutcome.message})`);
@@ -505,8 +547,59 @@ export async function runListenReadStage(ctx: PipelineContext): Promise<ListenRe
     ctx.onProgress(ctx.state);
     return { kind: "empty" };
   }
-  ctx.step(`listen-read: ${transcripts.length} transcript(s) fetched`);
+  if (config.transcriptRotation) {
+    const nextOffset = nextListenReadOffset(usedOffset, config.transcriptCount);
+    await writeListenReadCursor(nextOffset, ctx.state.run_id);
+    ctx.step(`listen-read: ${transcripts.length} transcript(s) fetched; next offset ${nextOffset}`);
+  } else {
+    ctx.step(`listen-read: ${transcripts.length} transcript(s) fetched`);
+  }
   return { kind: "ready", transcripts };
+}
+
+async function executeListenRead(ctx: PipelineContext, offset: number): Promise<SpawnResult> {
+  return run(
+    "bun",
+    buildListenReadArgs(ctx.corpusDir, config.transcriptCount, ctx.space, offset),
+    "sandbox",
+    {
+      heartbeatMs: config.stageHeartbeatMs,
+      onHeartbeat: () => {
+        ctx.step(`listen-read: still fetching transcripts (offset ${offset})`);
+      },
+    },
+  );
+}
+
+function logListenReadOutput(ctx: PipelineContext, read: SpawnResult): void {
+  const stdoutTail = boundedProcessOutput("stdout", read.stdout);
+  const stderrTail = boundedProcessOutput("stderr", read.stderr);
+  if (stdoutTail) ctx.step(`listen-read ${stdoutTail}`);
+  if (stderrTail && read.code !== 0) ctx.step(`listen-read ${stderrTail}`);
+}
+
+async function readListenReadCursor(): Promise<number> {
+  try {
+    return parseListenReadCursor(await readFile(config.listenReadCursorPath, "utf8"));
+  } catch {
+    return config.transcriptOffset;
+  }
+}
+
+async function writeListenReadCursor(nextOffset: number, runId: string): Promise<void> {
+  await writeFile(
+    config.listenReadCursorPath,
+    JSON.stringify(
+      {
+        nextOffset,
+        updatedAt: new Date().toISOString(),
+        lastRunId: runId,
+      } satisfies ListenReadCursor,
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
 }
 
 export async function runGenerateStage(
