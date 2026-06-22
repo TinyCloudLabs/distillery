@@ -15,9 +15,9 @@ see `DEPLOY.md` for the live coordinates and the deploy/redeploy runbook.
 ```
 GET  /agent/info             → { did, name, permissions: PermissionEntry[] }            (public)
 POST /agent/delegation       { serialized } → { ok, agentDid, delegationCid, spaceId, expiresAt }   (AUTH)
-POST /agent/run              {} (uses the stored delegation) → { run_id, status:"queued" }           (AUTH)
-GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, log?:string[], error? }
-GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, log?:string[], error? }], lock?: { run_id, owner, pid, acquiredAt, ageMs, reclaimable } }   (public)
+POST /agent/run              { artifactType?: "auto"|ArtifactType } → { run_id, status:"queued" }   (AUTH)
+GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, targetArtifactType?, proof?, log?:string[], error? }
+GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, targetArtifactType?, proof?, log?:string[], error? }], lock?: { run_id, owner, pid, acquiredAt, ageMs, reclaimable } }   (public)
 ```
 
 `PublishedArtifact` is `{ type, slug, media?: { heroImage, audio, video } }`.
@@ -25,6 +25,10 @@ GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedA
 published, including approval-held outward drafts and rich-media artifacts held
 by media preflight.
 `RunMediaSummary` is `{ heroImages, audio, video }`.
+`proof` is present when a targeted run requested `artifactType`; it records
+whether the requested type actually published, plus rich-media checks for Feed
+visibility (`clip` video, `podcast` audio, `article` hero image). The same proof
+shape is returned by the Smithers `agent-run` workflows.
 
 `GET /agent/run/:run_id` includes a bounded tail of recent stage log lines, and
 `GET /agent/runs` lists recent runs (newest first, capped at 25) with a smaller
@@ -192,6 +196,12 @@ env). The tc CLI's config dir is `os.homedir()/.tinycloud` with no env override
 `bootstrap → listen-read → generate → critic → publish`, all under the
 delegation, into a per-run scratch dir (`<AGENT_RUNS_DIR>/<id>/`):
 
+`artifactType` defaults to `"auto"` and may be any value in the artifact
+registry. It is a quality-gated target/proof request, not a quota: generation is
+biased toward that format, publish still holds weak/duplicate/prerequisite-
+missing artifacts, and the final run status includes `proof` so Feed/Smithers
+can say whether the requested target actually landed.
+
 Each external child stage writes heartbeat progress at
 `AGENT_STAGE_HEARTBEAT_MS`, so Feed can distinguish a live long-running stage
 from a genuinely stale run. Generate-stage heartbeats include child-process
@@ -300,12 +310,11 @@ bunx smithers-orchestrator workflow run agent-run-staged --input '{"artifactType
 bunx smithers-orchestrator workflow run agent-run --input '{"artifactType":"podcast"}'
 ```
 
-For `artifactType:"clip"`, `agent-run-staged` is a proof run, not a soft
-preference: it checks the generated artifact directory before publish and fails
-without writing to TinyCloud unless there is a publishable `clip` artifact with a
-valid video file. The generate stage also gets a longer Smithers heartbeat window
-and a single attempt, so long video work is not retried halfway through and
-duplicated.
+For `artifactType:"clip"`, `agent-run-staged` has an additional pre-publish
+guard: it checks the generated artifact directory and fails without writing to
+TinyCloud unless there is a publishable `clip` artifact with a valid video file.
+The generate stage also gets a longer Smithers heartbeat window and a single
+attempt, so long video work is not retried halfway through and duplicated.
 
 To prove provider plumbing without the transcript/editorial gate, use the direct
 video smoke. It bypasses Claude, creates two local reference PNGs with ffmpeg,

@@ -232,15 +232,19 @@ skills continuously and decides what happens to their output. It is the
   agent/frontend/Smithers gates before a live run. The live `agent-run` and
   `agent-run-staged` workflows also accept
   `{"artifactType":"..."}` (`auto` by default) as a quality-gated generation
-  bias for development runs; it nudges skill choice without forcing weak output.
+  bias for development runs; it nudges skill choice without forcing weak output
+  and returns a `proof` block showing whether the target actually published.
 - **The delegated Feed agent** (`harness/agent/`) — the HTTPS/browser path used
   by TinyFeed. It runs `listen-read → generate → publish` under the user's
   TinyCloud delegation, reads recent Feed interactions as weak-prior generation
   backpressure, logs heartbeats for long child stages, and reports published
   media from `tc-publish --json` so run status reflects the media keys that
-  actually reached TinyCloud. Before publish it stamps
-  `raw_artifact.producer` with run/delegation provenance so Feed cards can show
-  which delegated run produced each durable artifact.
+  actually reached TinyCloud. `POST /agent/run` accepts optional `{ artifactType }`; run
+  status then carries `targetArtifactType` + `proof`, including video/audio/image
+  media checks for targeted rich artifacts.
+  Before publish it stamps `raw_artifact.producer` with run/delegation
+  provenance so Feed cards can show which delegated run produced each durable
+  artifact.
 - **The feedback → PREFERENCES.md backpressure loop** — the Folio feed logs
   six revealed-preference actions (`more`, `less`, `save`, `already_knew`,
   `wrong`, plus hide) to `feedback/events.jsonl`; `distill-preferences`
