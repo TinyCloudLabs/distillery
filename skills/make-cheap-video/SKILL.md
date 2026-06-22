@@ -1,26 +1,27 @@
 # Skill: make-cheap-video
 
-Distill transcript-derived narrative into a **cheap 15-second video clip
-artifact** using Gemini/Veo 3.1 Lite. This is the low-cost sibling of
-`make-clip`: same `clip` artifact contract, same poster/caption/save path,
-but a cheaper video generator and a lighter storyboard IR.
+Distill transcript-derived narrative into a **15-second video clip artifact**
+using Gemini/Veo 3.1 Lite. Despite the historical skill name, this is the
+preferred default video path: same `clip` artifact contract, same
+poster/caption/save path as `make-clip`, but with Gemini/Veo as the primary
+generator and a lighter storyboard IR.
 
 The output is still `artifacts/clip/<slug>/artifact.json` plus mp4 media, so
 TinyFeed and `tc-publish` do not need a new render type.
 
 ## When to Use
 
-Use this when the run wants video variety but not the full Seedance
-reference-video spend. The result can be a fun perspective on the ideas in the
-transcripts: allegory, anime, toy-scale reenactment, product metaphor,
-documentary miniature, or any other visual wrapper that preserves the
-emotional truth.
+Use this first when the run wants a transcript-driven video artifact. The
+result can be a fun perspective on the ideas in the transcripts: allegory,
+anime, toy-scale reenactment, product metaphor, documentary miniature, or any
+other visual wrapper that preserves the emotional truth.
 
 Do **not** use it for claims-heavy artifacts where literal fidelity matters
 more than mood, or when the narrative needs strict character continuity across
-a long fight. Veo Lite is cheap, but it is not a continuity engine.
+a long fight. Use `make-clip`/FAL/Seedance for those higher-control
+reference-video cases.
 
-## Model and Cost Posture
+## Model Posture
 
 - Provider: Gemini API / Veo 3.1 Lite.
 - Model: `veo-3.1-lite-generate-preview`.
@@ -64,7 +65,7 @@ Write `narrative.md` using `templates/01-narrative.md`. Include:
 
 Write `storyboard.md` using `templates/02-storyboard.md`.
 
-This is the cheap narrative compression pass. Treat it as a strict 15-second
+This is the compact narrative compression pass. Treat it as a strict 15-second
 shot plan split into two Veo Lite segments:
 
 - Segment A: 0-8s, setup -> turn.

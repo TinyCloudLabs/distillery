@@ -22,10 +22,10 @@ bun run smithers:media-smoke
 - Local Artifactory agent at `https://agent.feed.localhost:1355`
 - Local Gemini development env, sourced from `DEV_DISTILLERY_ENV` or
   `~/development.nosync/distillery/.env`
-- Media generation readiness, without printing secrets: whether a Gemini image
-  provider is present for hero images / podcast audio, whether `FAL_KEY` is
-  present for clips, and whether `AGENT_ENABLE_VIDEO=1` has explicitly enabled
-  video spend.
+- Media generation readiness, without printing secrets: whether a Gemini
+  provider is present for hero images / podcast audio / preferred Veo video,
+  whether `FAL_KEY` is present for the higher-control `make-clip` path, and
+  whether `AGENT_ENABLE_VIDEO=1` has explicitly enabled video spend.
 - Embedded Feed submodule alignment against the sibling `../feed` checkout.
   This is a readiness check because Smithers dev mode serves `../feed`, while
   Artifactory package scripts serve `submodules/feed`.
@@ -41,7 +41,7 @@ bun run smithers:media-smoke
 
 `feed-loop-readiness` is the no-spend preflight before a delegated live run. It
 checks pushed Feed/Artifactory state, sibling Feed versus embedded submodule
-alignment, active TinyCloud delegation, stale runner lock state, Gemini/FAL
+alignment, active TinyCloud delegation, stale runner lock state, Gemini/Veo/FAL
 media-provider readiness, and the deterministic agent/frontend/Smithers gates.
 It writes a JSON report under `.smithers/reports/` and does not start Claude,
 Gemini, FAL, TinyCloud writes, or `/agent/run`.
@@ -49,7 +49,7 @@ Gemini, FAL, TinyCloud writes, or `/agent/run`.
 `full-media-generation-smoke` is the controlled rich-media proof run. It is
 staged as visible Smithers nodes: `setup → clip → podcast → article → publish`
 (publish appears only when requested). Each generation node calls the real skill
-scripts directly, without Claude editorial selection: `make-clip` video smoke →
+scripts directly, without Claude editorial selection: `make-clip` FAL/Seedance video smoke →
 `make-clip save`, `make-podcast synthesize/save`, and `write-article save` →
 `illustrate-card`. By default it writes local artifacts and per-stage reports
 under `.smithers/reports/` without TinyCloud writes. Each report carries a
@@ -71,7 +71,11 @@ bun run smithers:media-smoke -- --input '{"publish":true}'
 
 This spends provider credits: FAL/Seedance for one short clip plus Gemini TTS
 and Gemini image generation. It is meant to prove media plumbing and Feed
-rendering, not transcript editorial quality.
+rendering, not transcript editorial quality. For the preferred
+transcript-driven clip proof, use `agent-run-staged` with
+`{"artifactType":"clip"}` while Gemini and `AGENT_ENABLE_VIDEO=1` are
+configured; the runner will prefer `make-cheap-video` unless the FAL path is
+explicitly needed.
 
 If generation succeeds but publish needs to be retried without spending on
 media again, reuse the generated artifact directory:
@@ -113,8 +117,8 @@ video }` counts in the Smithers output.
 Use `artifactType` when you want a transcript-driven proof for a specific Feed
 format. Both `agent-run` and `agent-run-staged` return a `proof` block that says
 whether the requested target actually published, including media requirements
-for the rich targets (`clip` needs video, `podcast` needs audio, `article` needs
-a hero image):
+for the rich targets (`clip` needs video from Gemini/Veo preferred video or
+FAL/Seedance make-clip, `podcast` needs audio, `article` needs a hero image):
 
 ```sh
 bun run smithers:agent-run:staged -- --input '{"artifactType":"clip","logTail":80}'

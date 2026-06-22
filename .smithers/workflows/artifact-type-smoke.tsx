@@ -86,7 +86,12 @@ const typeTests: Record<ArtifactType, string[]> = {
     "tests/compress.test.ts",
     "tests/narrative-seeds.test.ts",
   ],
-  clip: ["tests/artifact.test.ts", "tests/render-type.test.ts", "tests/make-clip.test.ts"],
+  clip: [
+    "tests/artifact.test.ts",
+    "tests/render-type.test.ts",
+    "tests/make-clip.test.ts",
+    "tests/veo.test.ts",
+  ],
   digest: ["tests/artifact.test.ts", "tests/render-type.test.ts", "tests/write-digest.test.ts"],
   "social-post": [
     "tests/artifact.test.ts",
@@ -119,6 +124,10 @@ const skillPathByType: Record<ArtifactType, string | null> = {
   "investor-update-snippet": "skills/investor-snippet/SKILL.md",
   "quote-card": "skills/quote-card/SKILL.md",
   "person-brief": "skills/person-brief/SKILL.md",
+};
+
+const secondarySkillPathsByType: Partial<Record<ArtifactType, string[]>> = {
+  clip: ["skills/make-cheap-video/SKILL.md"],
 };
 
 function selectedTypes(input: (typeof artifactInputValues)[number]): ArtifactType[] {
@@ -182,8 +191,17 @@ export default smithers((ctx) => (
             ok = false;
             typeNotes.push(`missing ${skillPath}`);
           }
+          for (const secondaryPath of secondarySkillPathsByType[type] ?? []) {
+            if (!existsSync(resolve(repoRoot, secondaryPath))) {
+              ok = false;
+              typeNotes.push(`missing ${secondaryPath}`);
+            }
+          }
           if (type === "insight-card") {
             typeNotes.push("hot-take also saves insight-card artifacts; this smoke covers both extract-insights and hot-take.");
+          }
+          if (type === "clip") {
+            typeNotes.push("make-cheap-video also saves clip artifacts; this smoke covers make-clip plus make-cheap-video/Veo helpers.");
           }
           if (type === "person-brief") {
             typeNotes.push("person-brief is salience-triggered: registry miner is null, but the skill publishes internal briefs when audience is internal.");

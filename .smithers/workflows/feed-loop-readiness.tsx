@@ -219,6 +219,8 @@ function livePrereqChecks(agentStateDir: string, agentRunsDir: string, devEnvPat
   const gemini = present(env, "GOOGLE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY");
   const fal = present(env, "FAL_KEY");
   const videoEnabled = (process.env.AGENT_ENABLE_VIDEO ?? env.AGENT_ENABLE_VIDEO) === "1";
+  const videoProvider = gemini || fal;
+  const videoProviders = [gemini ? "Gemini/Veo preferred video" : "", fal ? "FAL/Seedance make-clip" : ""].filter(Boolean);
   const checks: Check[] = [];
 
   checks.push({
@@ -249,15 +251,15 @@ function livePrereqChecks(agentStateDir: string, agentRunsDir: string, devEnvPat
   });
 
   checks.push({
-    name: "FAL video provider",
-    status: fal && videoEnabled ? "pass" : "warn",
-    ok: fal && videoEnabled,
+    name: "clip video provider",
+    status: videoProvider && videoEnabled ? "pass" : "warn",
+    ok: videoProvider && videoEnabled,
     detail:
-      fal && videoEnabled
-        ? "FAL_KEY and AGENT_ENABLE_VIDEO=1 are present for clip generation."
-        : fal
-          ? "FAL_KEY is present but AGENT_ENABLE_VIDEO=1 is not set; video spend is intentionally disabled."
-          : "FAL_KEY is not present; live run cannot prove generated clips.",
+      videoProvider && videoEnabled
+        ? `${videoProviders.join(" + ")} and AGENT_ENABLE_VIDEO=1 are present for clip generation.`
+        : videoProvider
+          ? `${videoProviders.join(" + ")} present, but AGENT_ENABLE_VIDEO=1 is not set; video spend is intentionally disabled.`
+          : "No Gemini/Veo or FAL video provider found; live run cannot prove generated clips.",
   });
 
   return checks;

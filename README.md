@@ -89,9 +89,9 @@ No script in any artifact skill calls a model — judgment lives in the agent.
   body, anchored pull-quotes) from one transcript or a collection.
 - **make-podcast** — a 2–5 minute micro-`podcast` (script + synthesized
   audio) built around one through-line.
-- **make-cheap-video** — a lower-cost `clip` path using Gemini/Veo 3.1 Lite:
-  two short segments stitched into a ~15s video, then saved/published through
-  the same `clip` artifact contract as `make-clip`.
+- **make-cheap-video** — the preferred Gemini/Veo `clip` path: two short
+  Veo 3.1 Lite segments stitched into a ~15s video, then saved/published
+  through the same `clip` artifact contract as `make-clip`.
 
 ### Outward drafts — born `approval_status: pending`, never auto-published
 
@@ -113,9 +113,9 @@ No script in any artifact skill calls a model — judgment lives in the agent.
 
 - **illustrate-card** — adds a `hero` illustration (Gemini image) to any
   contract-valid artifact directory.
-- **make-clip** — the higher-control `clip` path: identity image + storyboard
-  sheet + Seedance reference-to-video, used when continuity and visual
-  specificity matter more than cost.
+- **make-clip** — the higher-control FAL/Seedance `clip` path: identity image
+  + storyboard sheet + reference-to-video, used when continuity and visual
+  specificity matter more than the default Gemini/Veo path.
 
 ### Corpus navigation + orchestration skills
 

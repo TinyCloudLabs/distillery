@@ -129,9 +129,16 @@ function mediaConfigDetail(devEnv: Record<string, string>): { ok: boolean; detai
   const image = envPresent(devEnv, "GOOGLE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY");
   const fal = envPresent(devEnv, "FAL_KEY");
   const videoFlag = (process.env.AGENT_ENABLE_VIDEO ?? devEnv.AGENT_ENABLE_VIDEO) === "1";
+  const videoProvider = image || fal;
+  const videoDetail =
+    videoProvider && videoFlag
+      ? `enabled (${[image ? "Gemini/Veo preferred video" : "", fal ? "FAL/Seedance make-clip" : ""].filter(Boolean).join(" + ")})`
+      : videoProvider
+        ? `disabled (${[image ? "Gemini/Veo" : "", fal ? "FAL_KEY" : ""].filter(Boolean).join(" + ")} present, AGENT_ENABLE_VIDEO=1 missing)`
+        : "disabled (no Gemini/Veo or FAL provider)";
   const parts = [
     `hero images: ${image ? "enabled (Gemini provider present)" : "disabled (no Gemini provider)"}`,
-    `video clips: ${fal && videoFlag ? "enabled" : fal ? "disabled (FAL_KEY present, AGENT_ENABLE_VIDEO=1 missing)" : "disabled (no FAL_KEY)"}`,
+    `video clips: ${videoDetail}`,
     `podcast audio: available when Gemini provider is present`,
   ];
   return { ok: image, detail: parts.join("; ") };
@@ -334,7 +341,7 @@ export default smithers((ctx) => (
             "Feed reads VITE_AGENT_CONFIG_OVERRIDE=1, VITE_AGENT_HOST, and VITE_AGENT_TOKEN from the dev process environment.",
             "The agent launcher sources DEV_DISTILLERY_ENV or ~/development.nosync/distillery/.env for GEMINI_API_KEY without copying secrets into this repo.",
             "Media readiness is non-secret: Smithers reports provider presence and AGENT_ENABLE_VIDEO, never key values.",
-            "Video remains opt-in even when FAL_KEY exists; set AGENT_ENABLE_VIDEO=1 only for runs where clip spend is intended.",
+            "Video remains opt-in even when Gemini/Veo or FAL providers exist; set AGENT_ENABLE_VIDEO=1 only for runs where clip spend is intended.",
             "If Portless reports `EPERM` for ~/.portless/proxy.log, run the launcher outside the sandbox or approve the unsandboxed local dev-server command.",
             "If local listeners are present but Portless routes or endpoint fetches are blocked/failing, the probe may be running inside a restricted sandbox; rerun it outside the sandbox before treating Portless as broken.",
             "Smithers dev mode serves the sibling Feed checkout, while Artifactory package scripts serve submodules/feed; keep those commits aligned before trusting end-to-end behavior.",

@@ -1,7 +1,7 @@
 // smithers-source: local
 // smithers-metadata-version: 1
-// smithers-display-name: Video Generation Smoke
-// smithers-description: Directly prove FAL/Seedance video generation without Claude or transcript editorial gates.
+// smithers-display-name: FAL Video Generation Smoke
+// smithers-description: Directly prove the make-clip FAL/Seedance video path without Claude or transcript editorial gates.
 // smithers-tags: video, make-clip, fal, smoke
 /** @jsxImportSource smithers-orchestrator */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
