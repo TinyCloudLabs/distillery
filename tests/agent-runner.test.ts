@@ -93,6 +93,8 @@ describe("agent runner listen-read classification", () => {
       "12",
       "--space",
       "space-id",
+      "--owner-space",
+      "space-id",
       "--conversation-id",
       "c1",
       "--conversation-id",
@@ -109,6 +111,8 @@ describe("agent runner listen-read classification", () => {
       "--offset",
       "10",
       "--space",
+      "space-id",
+      "--owner-space",
       "space-id",
     ]);
   });

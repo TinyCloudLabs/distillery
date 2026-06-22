@@ -223,6 +223,8 @@ export function buildListenCandidateArgs(count: number, space: string, offset: n
     String(Math.max(0, Math.floor(offset))),
     "--space",
     space,
+    "--owner-space",
+    space,
   ];
 }
 
@@ -242,6 +244,8 @@ export function buildListenReadArgs(
     "--offset",
     String(Math.max(0, Math.floor(offset))),
     "--space",
+    space,
+    "--owner-space",
     space,
   ];
   for (const id of conversationIds) args.push("--conversation-id", id);
