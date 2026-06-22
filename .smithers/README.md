@@ -57,7 +57,11 @@ bun run smithers:feed-loop
 `feed-composition-smoke` is the no-spend selection/composition gate. It checks
 preference backpressure, format exploration, cap behavior, draft isolation,
 same-signal dedup, and the delegated agent's `plan-feed-mix` video-slot policy
-so video-enabled `auto` runs do not silently regress to text-only feeds.
+so video-enabled `auto` runs do not silently regress to text-only feeds. The
+mix plan is also the current first-class place to explain feed shape: compact
+artifact, developed artifact, rich-media artifact when possible; diversity
+across source/theme/type; and how weak interaction backpressure was used
+without overfitting sparse early feedback.
 
 `feed-loop-readiness` is the no-spend preflight before a delegated live run. It
 checks pushed Feed/Artifactory state, sibling Feed versus embedded submodule

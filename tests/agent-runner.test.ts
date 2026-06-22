@@ -378,6 +378,11 @@ describe("agent runner generation prompt", () => {
     expect(plan).toContain("/tmp/artifacts/mix-plan.md");
     expect(plan).toContain("VIDEO SLOT: reserve one publishable slot for a clip attempt");
     expect(plan).toContain("Do not silently skip");
+    expect(plan).toContain("feed-shape, diversity checks, backpressure");
+    expect(plan).toContain("one compact artifact, one developed artifact, and");
+    expect(plan).toContain("one rich-media artifact");
+    expect(plan).toContain("regression-to-mean guard");
+    expect(plan).toContain("one transcript, source, theme, or artifact family");
   });
 
   test("does not reserve video when another explicit target takes priority", () => {
@@ -390,6 +395,8 @@ describe("agent runner generation prompt", () => {
     }).join("\n");
 
     expect(plan).toContain("VIDEO SLOT: video is available, but this run has a different explicit");
+    expect(plan).toContain("use remaining slots");
+    expect(plan).toContain("diversify the feed");
     expect(plan).not.toContain("reserve one publishable slot for a clip attempt");
   });
 

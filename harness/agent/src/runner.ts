@@ -1331,6 +1331,13 @@ export function buildArtifactMixPlanStep(options: {
     "   a published artifact. The plan must name the intended slots and explicit",
     "   skip reasons for any rich-media slot that does not land.",
     `   Run target: ${target}; publishable cap: ${options.targetArtifacts}; media focus: ${options.mediaFocus}.`,
+    "   The plan must include feed-shape, diversity checks, backpressure, and",
+    "   regression-to-mean guard sections so Smithers/operator review can see",
+    "   why this run is a healthy feed mix, not just valid standalone artifacts.",
+    "   For auto runs, prefer one compact artifact, one developed artifact, and",
+    "   one rich-media artifact when the cap, providers, and corpus support it.",
+    "   Avoid letting one transcript, source, theme, or artifact family",
+    "   monopolize every slot unless the corpus genuinely only has one story.",
   ];
 
   if (reserveVideo) {
@@ -1363,6 +1370,8 @@ export function buildArtifactMixPlanStep(options: {
     "   Fill remaining slots with the strongest feed mix: hot-take, article,",
     "   digest, insight-card, or person-brief as the corpus earns them. Preserve",
     "   exploration; reader interactions are weak backpressure, not settled taste.",
+    "   If an explicit target consumes the first proof slot, use remaining slots",
+    "   to diversify the feed instead of producing near-duplicates of the target.",
   );
 
   return lines;

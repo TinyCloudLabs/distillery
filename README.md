@@ -94,7 +94,9 @@ No script in any artifact skill calls a model — judgment lives in the agent.
   through the same `clip` artifact contract as `make-clip`.
 - **plan-feed-mix** — the first-pass selection skill: chooses the intended
   artifact mix before generation, reserves a video slot when video is enabled
-  in `auto` runs, and records explicit skip reasons in `mix-plan.md`.
+  in `auto` runs, records explicit skip reasons in `mix-plan.md`, and explains
+  the feed shape across compact, developed, and rich-media slots so a run does
+  not collapse into one artifact family or one source transcript.
 
 ### Outward drafts — born `approval_status: pending`, never auto-published
 
@@ -259,6 +261,9 @@ skills continuously and decides what happens to their output. It is the
   writes `mix-plan.md`, and reserves one publishable slot for a Gemini/Veo clip
   attempt unless another explicit target takes priority. If no video ships, the
   run must state why instead of silently filling the feed with text artifacts.
+  The mix plan must also document compact/developed/rich-media feed shape,
+  source/theme/type diversity, weak interaction backpressure, and the
+  regression-to-mean guard for sparse early preferences.
   The live agent also persists a small Listen read cursor outside the repo and
   passes `--offset` into `tc-listen-read`, so repeated Feed-triggered runs rotate
   through transcript windows instead of reusing the same latest conversations
