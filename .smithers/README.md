@@ -46,11 +46,13 @@ media-provider readiness, and the deterministic agent/frontend/Smithers gates.
 It writes a JSON report under `.smithers/reports/` and does not start Claude,
 Gemini, FAL, TinyCloud writes, or `/agent/run`.
 
-`full-media-generation-smoke` is the controlled rich-media proof run. It calls
-the real skill scripts directly, without Claude editorial selection:
-`make-clip` video smoke → `make-clip save`, `make-podcast synthesize/save`, and
-`write-article save` → `illustrate-card`. By default it writes local artifacts
-and a report under `.smithers/reports/` without TinyCloud writes:
+`full-media-generation-smoke` is the controlled rich-media proof run. It is
+staged as visible Smithers nodes: `setup → clip → podcast → article → publish`
+(publish appears only when requested). Each generation node calls the real skill
+scripts directly, without Claude editorial selection: `make-clip` video smoke →
+`make-clip save`, `make-podcast synthesize/save`, and `write-article save` →
+`illustrate-card`. By default it writes local artifacts and per-stage reports
+under `.smithers/reports/` without TinyCloud writes:
 
 ```sh
 bun run smithers:media-smoke
@@ -66,6 +68,13 @@ bun run smithers:media-smoke -- --input '{"publish":true}'
 This spends provider credits: FAL/Seedance for one short clip plus Gemini TTS
 and Gemini image generation. It is meant to prove media plumbing and Feed
 rendering, not transcript editorial quality.
+
+If generation succeeds but publish needs to be retried without spending on
+media again, reuse the generated artifact directory:
+
+```sh
+bun scripts/full-media-smoke.ts --publish-existing .smithers/reports/full-media-smoke-...
+```
 
 Start the two surfaces with:
 

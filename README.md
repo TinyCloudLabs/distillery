@@ -182,10 +182,12 @@ type in one controlled pass:
 bun run smithers:media-smoke
 ```
 
-The default is local-only: it generates one video clip, one podcast, and one
-article with a generated hero image under `.smithers/reports/`, then writes a
-JSON report. To publish exactly those three proof artifacts into the delegated
-Feed, run:
+The workflow is staged as `setup → clip → podcast → article → publish`, so a
+slow video provider queue is visible as the clip node instead of hiding inside
+one long opaque run. The default is local-only: it generates one video clip, one
+podcast, and one article with a generated hero image under `.smithers/reports/`,
+then writes per-stage JSON reports. To publish exactly those three proof
+artifacts into the delegated Feed, run:
 
 ```sh
 bun run smithers:media-smoke -- --input '{"publish":true}'
@@ -194,6 +196,9 @@ bun run smithers:media-smoke -- --input '{"publish":true}'
 This is a spend-bearing operator test (FAL video + Gemini TTS/image). It bypasses
 Claude editorial selection on purpose and calls the real skill scripts directly,
 so failures point at the specific media skill or the delegated publish path.
+If generation succeeds but publish needs retrying, `scripts/full-media-smoke.ts
+--publish-existing <dir>` republishes an existing artifact directory without
+rerunning video, audio, or image generation.
 
 ---
 

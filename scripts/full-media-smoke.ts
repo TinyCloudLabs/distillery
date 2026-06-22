@@ -32,11 +32,14 @@ const repoRoot = resolve(import.meta.dir, "..");
 type Duration = "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13" | "14" | "15" | "auto";
 type Resolution = "480p" | "720p" | "1080p";
 type Aspect = "1:1" | "9:16" | "16:9";
+type Stage = "clip" | "podcast" | "article";
 
 interface Args {
   publish: boolean;
   outDir?: string;
   publishExistingDir?: string;
+  only?: Stage;
+  runLabel?: string;
   report?: string;
   envFile: string;
   duration: Duration;
@@ -63,6 +66,7 @@ function usage(): never {
   console.error(
       "usage: bun scripts/full-media-smoke.ts [--publish] [--out-dir DIR]\n" +
       "       [--publish-existing DIR]\n" +
+      "       [--only clip|podcast|article] [--run-label LABEL]\n" +
       "       [--report FILE] [--env-file FILE] [--duration 4..15|auto]\n" +
       "       [--resolution 480p|720p|1080p] [--aspect 1:1|9:16|16:9]\n" +
       "       [--keep-scratch]",
@@ -105,6 +109,7 @@ function parseArgs(argv: string[]): Args {
   const validDurations = new Set(["4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "auto"]);
   const validResolutions = new Set(["480p", "720p", "1080p"]);
   const validAspects = new Set(["1:1", "9:16", "16:9"]);
+  const validStages = new Set(["clip", "podcast", "article"]);
   const args: Args = {
     publish: false,
     envFile: process.env.DEV_DISTILLERY_ENV ?? "~/development.nosync/distillery/.env",
@@ -127,6 +132,13 @@ function parseArgs(argv: string[]): Args {
     } else if (arg === "--publish-existing") {
       args.publishExistingDir = argv[++i];
       if (!args.publishExistingDir) usage();
+    } else if (arg === "--only") {
+      const value = argv[++i];
+      if (!validStages.has(value ?? "")) usage();
+      args.only = value as Stage;
+    } else if (arg === "--run-label") {
+      args.runLabel = argv[++i];
+      if (!args.runLabel) usage();
     } else if (arg === "--env-file") {
       args.envFile = argv[++i] ?? usage();
     } else if (arg === "--duration") {
@@ -422,10 +434,12 @@ async function publishArtifacts(outDir: string): Promise<{
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const runLabel = timestampSlug();
+  const runLabel = args.runLabel ?? timestampSlug();
   const outDir = args.publishExistingDir
     ? resolve(args.publishExistingDir)
-    : resolve(args.outDir ?? ".smithers/reports", `full-media-smoke-${runLabel}`);
+    : args.outDir
+      ? resolve(args.outDir)
+      : resolve(".smithers/reports", `full-media-smoke-${runLabel}`);
   const reportPath = args.report
     ? resolve(args.report)
     : resolve(outDir, "full-media-smoke-report.json");
@@ -440,6 +454,12 @@ async function main() {
   try {
     if (args.publishExistingDir) {
       args.publish = true;
+    } else if (args.only === "clip") {
+      artifacts.push(await generateClip(outDir, runLabel, args.envFile, args));
+    } else if (args.only === "podcast") {
+      artifacts.push(await generatePodcast(outDir, runLabel, providerEnv));
+    } else if (args.only === "article") {
+      artifacts.push(await generateArticle(outDir, runLabel, providerEnv));
     } else {
       artifacts.push(await generateClip(outDir, runLabel, args.envFile, args));
       artifacts.push(await generatePodcast(outDir, runLabel, providerEnv));
