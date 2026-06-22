@@ -25,6 +25,7 @@ import type {
   PublishedRef,
   RunMixPlan,
   CorpusPlanSummary,
+  RunExecutionSource,
 } from "./runner.ts";
 import type { AgentRunProof } from "./run-proof.ts";
 import type { ArtifactType } from "../../../skills/_shared/lib/formats.ts";
@@ -40,6 +41,7 @@ export interface RunSummary {
   published?: PublishedRef[];
   held?: HeldArtifactRef[];
   media?: RunMediaSummary;
+  executionSource?: RunExecutionSource;
   targetArtifactType?: ArtifactType;
   corpusPlan?: CorpusPlanSummary;
   mixPlan?: RunMixPlan;
@@ -294,7 +296,22 @@ function lastRunProgressAt(state: RunState): number {
  * an arbitrary value.
  */
 function toSummary(state: RunState): RunSummary | null {
-  const { run_id, status, startedAt, finishedAt, published, held, media, targetArtifactType, corpusPlan, mixPlan, proof, error, log } = state;
+  const {
+    run_id,
+    status,
+    startedAt,
+    finishedAt,
+    published,
+    held,
+    media,
+    executionSource,
+    targetArtifactType,
+    corpusPlan,
+    mixPlan,
+    proof,
+    error,
+    log,
+  } = state;
   if (typeof run_id !== "string" || !RUN_STATUSES.includes(status)) return null;
   if (typeof startedAt !== "number") return null;
   const published_ = Array.isArray(published) && published.length > 0 ? published : undefined;
@@ -308,6 +325,7 @@ function toSummary(state: RunState): RunSummary | null {
     ...(published_ ? { published: published_ } : {}),
     ...(held_ ? { held: held_ } : {}),
     ...(media ? { media } : published_ ? { media: summarizePublishedMedia(published_) } : {}),
+    ...(executionSource ? { executionSource } : {}),
     ...(targetArtifactType ? { targetArtifactType } : {}),
     ...(corpusPlan ? { corpusPlan } : {}),
     ...(mixPlan ? { mixPlan } : {}),

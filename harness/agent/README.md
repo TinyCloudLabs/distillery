@@ -16,8 +16,8 @@ see `DEPLOY.md` for the live coordinates and the deploy/redeploy runbook.
 GET  /agent/info             → { did, name, permissions: PermissionEntry[] }            (public)
 POST /agent/delegation       { serialized } → { ok, agentDid, delegationCid, spaceId, expiresAt }   (AUTH)
 POST /agent/run              { artifactType?: "auto"|ArtifactType } → { run_id, status:"queued" }   (AUTH)
-GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, targetArtifactType?, proof?, log?:string[], error? }
-GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, targetArtifactType?, proof?, log?:string[], error? }], lock?: { run_id, owner, pid, acquiredAt, ageMs, reclaimable } }   (public)
+GET  /agent/run/:run_id      → { run_id, status:"queued"|"running"|"done"|"error", startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, executionSource?, targetArtifactType?, corpusPlan?, mixPlan?, proof?, log?:string[], error? }
+GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedAt?, published?: PublishedArtifact[], held?: HeldArtifact[], media?: RunMediaSummary, executionSource?, targetArtifactType?, corpusPlan?, mixPlan?, proof?, log?:string[], error? }], lock?: { run_id, owner, pid, acquiredAt, ageMs, reclaimable } }   (public)
 ```
 
 `PublishedArtifact` is `{ type, slug, media?: { heroImage, audio, video } }`.
@@ -25,6 +25,11 @@ GET  /agent/runs             → { runs: [{ run_id, status, startedAt, finishedA
 published, including approval-held outward drafts and rich-media artifacts held
 by media preflight.
 `RunMediaSummary` is `{ heroImages, audio, video }`.
+`executionSource` is optional persistent provenance for the runner entry point:
+`agent-http` (`POST /agent/run`), `smithers-agent-run`, or
+`smithers-agent-run-staged`. It remains available after the shared run lock is
+released, so Feed history can distinguish browser-triggered runs from Smithers
+operator runs.
 `proof` is present when a targeted run requested `artifactType`; it records
 whether the requested type actually published, plus rich-media checks for Feed
 visibility (`clip` video, `podcast` audio, `article` hero image). The same proof

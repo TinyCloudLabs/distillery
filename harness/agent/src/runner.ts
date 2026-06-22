@@ -108,12 +108,42 @@ export interface RunMixPlan {
   error?: string;
 }
 
+export type RunExecutionSourceName =
+  | "agent-http"
+  | "smithers-agent-run"
+  | "smithers-agent-run-staged";
+
+export interface RunExecutionSource {
+  source: RunExecutionSourceName;
+  label: string;
+  entrypoint: string;
+}
+
+export const RUN_EXECUTION_SOURCES = {
+  http: {
+    source: "agent-http",
+    label: "Feed HTTP agent",
+    entrypoint: "POST /agent/run",
+  },
+  smithersAgentRun: {
+    source: "smithers-agent-run",
+    label: "Smithers agent-run",
+    entrypoint: "bun run smithers:agent-run",
+  },
+  smithersAgentRunStaged: {
+    source: "smithers-agent-run-staged",
+    label: "Smithers staged agent-run",
+    entrypoint: "bun run smithers:agent-run:staged",
+  },
+} as const satisfies Record<string, RunExecutionSource>;
+
 export interface RunState {
   run_id: string;
   status: RunStatus;
   published: PublishedRef[];
   held?: HeldArtifactRef[];
   media?: RunMediaSummary;
+  executionSource?: RunExecutionSource;
   targetArtifactType?: ArtifactType;
   corpusPlan?: CorpusPlanSummary;
   mixPlan?: RunMixPlan;
@@ -158,6 +188,8 @@ export interface PipelineContext {
 }
 
 export interface PipelineOptions {
+  /** Persistent evidence for whether the run came from Feed HTTP or Smithers. */
+  executionSource?: RunExecutionSource;
   /**
    * Optional live-generation nudge for Smithers/operator runs. This is never a
    * quota or force flag: the generator must still skip the target when the
@@ -576,6 +608,9 @@ export async function runPipeline(
   options: PipelineOptions = {},
 ): Promise<void> {
   const ctx = createPipelineContext(active, state, onProgress, options);
+  if (options.executionSource) {
+    state.executionSource = options.executionSource;
+  }
   state.targetArtifactType = ctx.targetArtifactType;
 
   state.status = "running";
@@ -619,6 +654,9 @@ export function createPipelineContext(
 ): PipelineContext {
   const corpusDir = join(config.runsDir, state.run_id, "corpus");
   const artifactsDir = join(config.runsDir, state.run_id, "artifacts");
+  if (options.executionSource) {
+    state.executionSource = options.executionSource;
+  }
   return {
     active,
     state,

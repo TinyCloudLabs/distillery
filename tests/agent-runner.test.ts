@@ -29,6 +29,7 @@ import {
   parseListenCandidateList,
   parseListenReadCursor,
   readRunMixPlan,
+  RUN_EXECUTION_SOURCES,
   runPublishStage,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
@@ -221,14 +222,20 @@ describe("agent runner pipeline context", () => {
       delegation: {},
     };
 
-    const ctx = createPipelineContext(active as unknown as ActiveDelegation, state, (next) => {
-      progress.push({ ...next, published: [...next.published], log: [...next.log] });
-    });
+    const ctx = createPipelineContext(
+      active as unknown as ActiveDelegation,
+      state,
+      (next) => {
+        progress.push({ ...next, published: [...next.published], log: [...next.log] });
+      },
+      { executionSource: RUN_EXECUTION_SOURCES.smithersAgentRunStaged },
+    );
     ctx.step("unit-test stage marker");
 
     expect(ctx.space).toBe(active.spaceId);
     expect(ctx.corpusDir.endsWith("/run-1781811113187-abc123/corpus")).toBe(true);
     expect(ctx.artifactsDir.endsWith("/run-1781811113187-abc123/artifacts")).toBe(true);
+    expect(state.executionSource).toEqual(RUN_EXECUTION_SOURCES.smithersAgentRunStaged);
     expect(state.log[0]).toContain("unit-test stage marker");
     expect(progress).toHaveLength(1);
   });

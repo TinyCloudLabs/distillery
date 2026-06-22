@@ -13,6 +13,7 @@ import {
   createPipelineContext,
   listArtifactRoutes,
   prepareRunScratch,
+  RUN_EXECUTION_SOURCES,
   runGenerateStage,
   runListenReadStage,
   runPublishStage,
@@ -100,6 +101,13 @@ const stageBaseSchema = z.object({
   agentRunId: z.string(),
   stage: z.string(),
   status: runStatusSchema,
+  executionSource: z
+    .object({
+      source: z.enum(["agent-http", "smithers-agent-run", "smithers-agent-run-staged"]),
+      label: z.string(),
+      entrypoint: z.string(),
+    })
+    .optional(),
   startedAt: z.number(),
   finishedAt: z.number().optional(),
   statusFile: z.string(),
@@ -170,6 +178,7 @@ function base(stage: string, state: RunState, logTailMax: number, ok: boolean) {
     agentRunId: state.run_id,
     stage,
     status: state.status,
+    ...(state.executionSource ? { executionSource: state.executionSource } : {}),
     startedAt: state.startedAt,
     ...(typeof state.finishedAt === "number" ? { finishedAt: state.finishedAt } : {}),
     statusFile: statusFile(state.run_id),
@@ -252,7 +261,10 @@ async function restoreContext(agentRunId: string, targetArtifactType?: ArtifactT
   return {
     active,
     state,
-    ctx: createPipelineContext(active, state, writeRun, { targetArtifactType }),
+    ctx: createPipelineContext(active, state, writeRun, {
+      executionSource: RUN_EXECUTION_SOURCES.smithersAgentRunStaged,
+      targetArtifactType,
+    }),
   };
 }
 
@@ -316,7 +328,10 @@ export default smithers((ctx) => {
                 );
                 return { ...base("preflight", state, logTailMax, false), hasDelegation: false, hasLock: true, notes };
               }
-              const pipe = createPipelineContext(active, state, writeRun, { targetArtifactType });
+              const pipe = createPipelineContext(active, state, writeRun, {
+                executionSource: RUN_EXECUTION_SOURCES.smithersAgentRunStaged,
+                targetArtifactType,
+              });
               state.status = "running";
               pipe.step(
                 targetArtifactType

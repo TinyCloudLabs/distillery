@@ -8,7 +8,7 @@ import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod/v4";
 import { config } from "../../harness/agent/src/config.ts";
 import { AgentSession } from "../../harness/agent/src/session.ts";
-import { runPipeline, type RunState } from "../../harness/agent/src/runner.ts";
+import { RUN_EXECUTION_SOURCES, runPipeline, type RunState } from "../../harness/agent/src/runner.ts";
 import { verifyAgentRunProof } from "../../harness/agent/src/run-proof.ts";
 import { ARTIFACT_TYPES, type ArtifactType } from "../../skills/_shared/lib/formats.ts";
 import {
@@ -87,6 +87,13 @@ const agentRunSchema = z.object({
   ok: z.boolean(),
   agentRunId: z.string(),
   status: z.enum(["queued", "running", "done", "error"]),
+  executionSource: z
+    .object({
+      source: z.enum(["agent-http", "smithers-agent-run", "smithers-agent-run-staged"]),
+      label: z.string(),
+      entrypoint: z.string(),
+    })
+    .optional(),
   startedAt: z.number(),
   finishedAt: z.number().optional(),
   published: z.array(publishedSchema),
@@ -117,6 +124,7 @@ function summarize(
     ok: state.status === "done",
     agentRunId: state.run_id,
     status: state.status,
+    ...(state.executionSource ? { executionSource: state.executionSource } : {}),
     startedAt: state.startedAt,
     ...(typeof state.finishedAt === "number" ? { finishedAt: state.finishedAt } : {}),
     published: state.published,
@@ -197,7 +205,10 @@ export default smithers((ctx) => (
             );
             return summarize(state, logTail, notes, targetArtifactType);
           }
-          await runPipeline(active, state, writeRun, { targetArtifactType });
+          await runPipeline(active, state, writeRun, {
+            executionSource: RUN_EXECUTION_SOURCES.smithersAgentRun,
+            targetArtifactType,
+          });
           return summarize(state, logTail, notes, targetArtifactType);
         } catch (err) {
           if (!state) {

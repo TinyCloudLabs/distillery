@@ -255,14 +255,17 @@ skills continuously and decides what happens to their output. It is the
   `{"artifactType":"..."}` (`auto` by default) as a quality-gated generation
   bias for development runs; it nudges skill choice without forcing weak output
   and returns a `proof` block showing whether the target actually published.
+  Live runs now persist `executionSource` in `status.json` and `/agent/runs`
+  (`agent-http`, `smithers-agent-run`, or `smithers-agent-run-staged`) so the
+  origin remains visible after the shared lock is released.
 - **The delegated Feed agent** (`harness/agent/`) — the HTTPS/browser path used
   by TinyFeed. It runs `listen-read → generate → publish` under the user's
   TinyCloud delegation, reads recent Feed interactions as weak-prior generation
   backpressure, logs heartbeats for long child stages, and reports published
   media from `tc-publish --json` so run status reflects the media keys that
   actually reached TinyCloud. `POST /agent/run` accepts optional `{ artifactType }`; run
-  status then carries `targetArtifactType` + `proof`, including video/audio/image
-  media checks for targeted rich artifacts.
+  status then carries `executionSource`, `targetArtifactType` + `proof`,
+  including video/audio/image media checks for targeted rich artifacts.
   In `auto` runs with video enabled, generation reads `plan-feed-mix` first,
   writes `mix-plan.md`, and reserves one publishable slot for a Gemini/Veo clip
   attempt unless another explicit target takes priority. If no video ships, the

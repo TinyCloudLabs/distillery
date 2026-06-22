@@ -18,7 +18,7 @@
 
 import { config } from "./config.ts";
 import { AgentSession, type ActiveDelegation } from "./session.ts";
-import { runPipeline, type RunState } from "./runner.ts";
+import { RUN_EXECUTION_SOURCES, runPipeline, type RunState } from "./runner.ts";
 import {
   acquireRunLock,
   createRun,
@@ -215,7 +215,10 @@ async function executeRun(
   targetArtifactType?: ArtifactType,
 ): Promise<void> {
   try {
-    await runPipeline(active, state, writeRun, { targetArtifactType });
+    await runPipeline(active, state, writeRun, {
+      executionSource: RUN_EXECUTION_SOURCES.http,
+      targetArtifactType,
+    });
   } catch (err) {
     state.status = "error";
     state.error = err instanceof Error ? err.message : String(err);
