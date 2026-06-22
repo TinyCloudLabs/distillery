@@ -67,6 +67,22 @@ const proofSchema = z.object({
   checks: z.array(z.object({ name: z.string(), ok: z.boolean(), detail: z.string() })),
 });
 
+const corpusPlanSchema = z.object({
+  source: z.enum(["selected", "rotation", "explicit"]),
+  offset: z.number().int().nonnegative(),
+  candidateCount: z.number().int().nonnegative().optional(),
+  selected: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string().optional(),
+      transcriptStorage: z.enum(["kv", "inline", "none"]).optional(),
+      reason: z.string(),
+    }),
+  ),
+  skippedRecent: z.number().int().nonnegative().optional(),
+  nextOffset: z.number().int().nonnegative().optional(),
+});
+
 const mixPlanSchema = z.object({
   status: z.enum(["ready", "missing", "error"]),
   path: z.literal("artifacts/mix-plan.md"),
@@ -101,11 +117,13 @@ const listenSchema = stageBaseSchema.extend({
   listenStatus: z.enum(["ready", "empty", "error"]),
   transcriptCount: z.number().int().nonnegative(),
   transcripts: z.array(z.string()),
+  corpusPlan: corpusPlanSchema.optional(),
 });
 
 const generateSchema = stageBaseSchema.extend({
   skipped: z.boolean(),
   transcriptCount: z.number().int().nonnegative(),
+  corpusPlan: corpusPlanSchema.optional(),
   mixPlan: mixPlanSchema.optional(),
 });
 
@@ -114,6 +132,7 @@ const publishSchema = stageBaseSchema.extend({
   published: z.array(publishedSchema),
   held: z.array(heldSchema),
   media: mediaSummarySchema,
+  corpusPlan: corpusPlanSchema.optional(),
   mixPlan: mixPlanSchema.optional(),
   proof: proofSchema,
 });
@@ -123,6 +142,7 @@ const cleanupSchema = stageBaseSchema.extend({
   published: z.array(publishedSchema),
   held: z.array(heldSchema),
   media: mediaSummarySchema,
+  corpusPlan: corpusPlanSchema.optional(),
   mixPlan: mixPlanSchema.optional(),
   proof: proofSchema,
 });
@@ -185,6 +205,7 @@ function proofFor(state: RunState, targetArtifactType?: ArtifactType) {
   const media = summarizePublishedMedia(state.published);
   return {
     media,
+    corpusPlan: state.corpusPlan,
     mixPlan: state.mixPlan,
     proof: verifyAgentRunProof({
       targetArtifactType,
@@ -339,6 +360,7 @@ export default smithers((ctx) => {
                     listenStatus: "empty" as const,
                     transcriptCount: 0,
                     transcripts: [],
+                    ...(state.corpusPlan ? { corpusPlan: state.corpusPlan } : {}),
                   };
                 }
                 return {
@@ -346,6 +368,7 @@ export default smithers((ctx) => {
                   listenStatus: "ready" as const,
                   transcriptCount: result.transcripts.length,
                   transcripts: result.transcripts,
+                  ...(state.corpusPlan ? { corpusPlan: state.corpusPlan } : {}),
                 };
               } catch (err) {
                 state = markError(state ?? missingRunState(runId), err);
@@ -354,6 +377,7 @@ export default smithers((ctx) => {
                   listenStatus: "error" as const,
                   transcriptCount: 0,
                   transcripts: [],
+                  ...(state.corpusPlan ? { corpusPlan: state.corpusPlan } : {}),
                 };
               }
             }}
@@ -379,6 +403,7 @@ export default smithers((ctx) => {
                   ...base("generate", state, logTailMax, true),
                   skipped: false,
                   transcriptCount: listen.transcriptCount,
+                  ...(state.corpusPlan ? { corpusPlan: state.corpusPlan } : {}),
                   ...(state.mixPlan ? { mixPlan: state.mixPlan } : {}),
                 };
               } catch (err) {
@@ -387,6 +412,7 @@ export default smithers((ctx) => {
                   ...base("generate", state, logTailMax, false),
                   skipped: false,
                   transcriptCount: listen.transcriptCount,
+                  ...(state.corpusPlan ? { corpusPlan: state.corpusPlan } : {}),
                   ...(state.mixPlan ? { mixPlan: state.mixPlan } : {}),
                 };
               }
@@ -407,25 +433,27 @@ export default smithers((ctx) => {
                 state.status = "done";
                 state.finishedAt = Date.now();
                 writeRun(state);
-                const { media, mixPlan, proof } = proofFor(state, targetArtifactType);
+                const { media, corpusPlan, mixPlan, proof } = proofFor(state, targetArtifactType);
                 return {
                   ...base("publish", state, logTailMax, true),
                   skipped: false,
                   published: state.published,
                   held: state.held ?? [],
                   media,
+                  ...(corpusPlan ? { corpusPlan } : {}),
                   ...(mixPlan ? { mixPlan } : {}),
                   proof,
                 };
               } catch (err) {
                 state = markError(state ?? missingRunState(runId), err);
-                const { media, mixPlan, proof } = proofFor(state, targetArtifactType);
+                const { media, corpusPlan, mixPlan, proof } = proofFor(state, targetArtifactType);
                 return {
                   ...base("publish", state, logTailMax, false),
                   skipped: false,
                   published: state.published,
                   held: state.held ?? [],
                   media,
+                  ...(corpusPlan ? { corpusPlan } : {}),
                   ...(mixPlan ? { mixPlan } : {}),
                   proof,
                 };
@@ -451,13 +479,14 @@ export default smithers((ctx) => {
               } finally {
                 releaseRunLock(runId);
               }
-              const { media, mixPlan, proof } = proofFor(state, targetArtifactType);
+              const { media, corpusPlan, mixPlan, proof } = proofFor(state, targetArtifactType);
               return {
                 ...base("cleanup", state, logTailMax, state.status !== "error"),
                 cleaned: true,
                 published: state.published,
                 held: state.held ?? [],
                 media,
+                ...(corpusPlan ? { corpusPlan } : {}),
                 ...(mixPlan ? { mixPlan } : {}),
                 proof,
               };

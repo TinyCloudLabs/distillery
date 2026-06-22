@@ -57,6 +57,22 @@ const proofSchema = z.object({
   checks: z.array(z.object({ name: z.string(), ok: z.boolean(), detail: z.string() })),
 });
 
+const corpusPlanSchema = z.object({
+  source: z.enum(["selected", "rotation", "explicit"]),
+  offset: z.number().int().nonnegative(),
+  candidateCount: z.number().int().nonnegative().optional(),
+  selected: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string().optional(),
+      transcriptStorage: z.enum(["kv", "inline", "none"]).optional(),
+      reason: z.string(),
+    }),
+  ),
+  skippedRecent: z.number().int().nonnegative().optional(),
+  nextOffset: z.number().int().nonnegative().optional(),
+});
+
 const mixPlanSchema = z.object({
   status: z.enum(["ready", "missing", "error"]),
   path: z.literal("artifacts/mix-plan.md"),
@@ -76,6 +92,7 @@ const agentRunSchema = z.object({
   published: z.array(publishedSchema),
   held: z.array(heldSchema),
   media: mediaSummarySchema,
+  corpusPlan: corpusPlanSchema.optional(),
   mixPlan: mixPlanSchema.optional(),
   proof: proofSchema,
   error: z.string().optional(),
@@ -105,6 +122,7 @@ function summarize(
     published: state.published,
     held: state.held ?? [],
     media,
+    ...(state.corpusPlan ? { corpusPlan: state.corpusPlan } : {}),
     ...(state.mixPlan ? { mixPlan: state.mixPlan } : {}),
     proof: verifyAgentRunProof({
       targetArtifactType,

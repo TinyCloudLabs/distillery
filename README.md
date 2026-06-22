@@ -275,7 +275,10 @@ skills continuously and decides what happens to their output. It is the
   fetch explicit `--conversation-id` selections; `AGENT_TRANSCRIPT_IDS` exposes
   that path for operator/Smithers selected-corpus runs. Normal Feed-triggered
   runs now create an observable `corpusPlan` first: list candidates, avoid
-  recently selected Listen conversations, then fetch explicit selected IDs.
+  recently selected Listen conversations, then fetch explicit selected IDs. The
+  same `corpusPlan` is returned in full run status, recent run summaries, and
+  Smithers live workflow outputs so Feed can show why a run used those
+  transcripts.
   Before publish it stamps `raw_artifact.producer` with run/delegation
   provenance so Feed cards can show which delegated run produced each durable
   artifact.
