@@ -6,7 +6,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { promisify } from "node:util";
 import { config } from "../harness/agent/src/config.ts";
@@ -25,6 +25,11 @@ import {
   summarizePublishedMedia,
   writeRun,
 } from "../harness/agent/src/runs.ts";
+import {
+  verifyFullMediaReport,
+  type FullMediaStage,
+  type FullMediaVerification,
+} from "./full-media-report.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = resolve(import.meta.dir, "..");
@@ -32,7 +37,7 @@ const repoRoot = resolve(import.meta.dir, "..");
 type Duration = "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" | "12" | "13" | "14" | "15" | "auto";
 type Resolution = "480p" | "720p" | "1080p";
 type Aspect = "1:1" | "9:16" | "16:9";
-type Stage = "clip" | "podcast" | "article";
+type Stage = FullMediaStage;
 
 interface Args {
   publish: boolean;
@@ -55,7 +60,7 @@ interface CommandResult {
 }
 
 interface ArtifactResult {
-  kind: "clip" | "podcast" | "article";
+  kind: Stage;
   dir: string;
   jsonPath: string;
   media: string[];
@@ -200,6 +205,10 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, JSON.stringify(value, null, 2) + "\n");
 }
 
+function expectedStages(args: Args): Stage[] {
+  return args.only ? [args.only] : ["clip", "podcast", "article"];
+}
+
 function savedPathFromOutput(output: string): string {
   const match = /^Saved:\s+(.+)$/m.exec(output);
   if (!match?.[1]) throw new Error(`could not find saved artifact path in output:\n${output.slice(-1000)}`);
@@ -208,6 +217,30 @@ function savedPathFromOutput(output: string): string {
 
 function artifactDirFromJson(jsonPath: string): string {
   return jsonPath.replace(/\/artifact\.json$/, "");
+}
+
+async function discoverExistingArtifacts(outDir: string): Promise<ArtifactResult[]> {
+  const artifacts: ArtifactResult[] = [];
+  for (const kind of ["clip", "podcast", "article"] as const) {
+    const typeDir = resolve(outDir, kind);
+    if (!existsSync(typeDir)) continue;
+    const entries = await readdir(typeDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const dir = resolve(typeDir, entry.name);
+      const jsonPath = resolve(dir, "artifact.json");
+      if (!existsSync(jsonPath)) continue;
+      const media = (await readdir(dir)).filter((name) => name !== "artifact.json");
+      artifacts.push({
+        kind,
+        dir,
+        jsonPath,
+        media,
+        commandNotes: ["discovered from --publish-existing"],
+      });
+    }
+  }
+  return artifacts.sort((a, b) => a.kind.localeCompare(b.kind) || a.dir.localeCompare(b.dir));
 }
 
 async function generateClip(outDir: string, runLabel: string, envFile: string, opts: Args): Promise<ArtifactResult> {
@@ -454,6 +487,7 @@ async function main() {
   try {
     if (args.publishExistingDir) {
       args.publish = true;
+      artifacts.push(...(await discoverExistingArtifacts(outDir)));
     } else if (args.only === "clip") {
       artifacts.push(await generateClip(outDir, runLabel, args.envFile, args));
     } else if (args.only === "podcast") {
@@ -470,18 +504,35 @@ async function main() {
       publish = await publishArtifacts(outDir);
     }
 
+    const verification = verifyFullMediaReport({
+      artifacts,
+      expectedStages: expectedStages(args),
+      publish,
+    });
     const report = {
-      ok: true,
+      ok: verification.ok,
       outDir,
       envFile: args.envFile,
       generatedAt: new Date().toISOString(),
       artifacts,
       publish,
+      verification,
     };
     await mkdir(resolve(reportPath, ".."), { recursive: true });
     await writeJson(reportPath, report);
-    console.log(JSON.stringify({ ok: true, reportPath, outDir, publish }, null, 2));
+    console.log(JSON.stringify({ ok: verification.ok, reportPath, outDir, publish, verification }, null, 2));
+    if (!verification.ok) process.exit(1);
   } catch (err) {
+    let verification: FullMediaVerification | undefined;
+    try {
+      verification = verifyFullMediaReport({
+        artifacts,
+        expectedStages: expectedStages(args),
+        publish,
+      });
+    } catch {
+      verification = undefined;
+    }
     const report = {
       ok: false,
       outDir,
@@ -489,6 +540,7 @@ async function main() {
       generatedAt: new Date().toISOString(),
       artifacts,
       publish,
+      ...(verification ? { verification } : {}),
       error: err instanceof Error ? err.message : String(err),
     };
     await mkdir(resolve(reportPath, ".."), { recursive: true });

@@ -52,7 +52,11 @@ staged as visible Smithers nodes: `setup → clip → podcast → article → pu
 scripts directly, without Claude editorial selection: `make-clip` video smoke →
 `make-clip save`, `make-podcast synthesize/save`, and `write-article save` →
 `illustrate-card`. By default it writes local artifacts and per-stage reports
-under `.smithers/reports/` without TinyCloud writes:
+under `.smithers/reports/` without TinyCloud writes. Each report carries a
+machine-readable `verification` block; a successful local proof requires the
+expected local media files, and a successful publish proof also requires Feed
+publish media flags/counts for clip video, podcast audio, and article hero
+image:
 
 ```sh
 bun run smithers:media-smoke
@@ -75,6 +79,10 @@ media again, reuse the generated artifact directory:
 ```sh
 bun scripts/full-media-smoke.ts --publish-existing .smithers/reports/full-media-smoke-...
 ```
+
+The retry report rediscovers existing `clip/`, `podcast/`, and `article/`
+artifact directories before publishing, so the report remains useful as evidence
+for what was republished.
 
 Start the two surfaces with:
 

@@ -186,7 +186,9 @@ The workflow is staged as `setup → clip → podcast → article → publish`, 
 slow video provider queue is visible as the clip node instead of hiding inside
 one long opaque run. The default is local-only: it generates one video clip, one
 podcast, and one article with a generated hero image under `.smithers/reports/`,
-then writes per-stage JSON reports. To publish exactly those three proof
+then writes per-stage JSON reports. Each report includes a `verification` block
+that fails the run unless the expected artifact media exists: clip video,
+podcast audio, and article hero image. To publish exactly those three proof
 artifacts into the delegated Feed, run:
 
 ```sh
@@ -198,7 +200,8 @@ Claude editorial selection on purpose and calls the real skill scripts directly,
 so failures point at the specific media skill or the delegated publish path.
 If generation succeeds but publish needs retrying, `scripts/full-media-smoke.ts
 --publish-existing <dir>` republishes an existing artifact directory without
-rerunning video, audio, or image generation.
+rerunning video, audio, or image generation. Retry reports rediscover the local
+artifact directories and verify the publish-side media flags/counts too.
 
 ---
 
