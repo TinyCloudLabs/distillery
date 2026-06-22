@@ -48,6 +48,10 @@ const gates = [
     files: ["tests/exploration-slot.test.ts", "tests/feed-run.test.ts"],
   },
   {
+    name: "artifact mix planning and video reserve",
+    files: ["tests/agent-runner.test.ts"],
+  },
+  {
     name: "published cap, draft isolation, and same-signal dedup",
     files: ["tests/feed-run-miners.test.ts", "tests/run-generation.test.ts"],
   },

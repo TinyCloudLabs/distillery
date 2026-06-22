@@ -220,9 +220,14 @@ run scratch.
 1. **listen-read** — `tc-listen-read/listen-read.ts` pulls the user's Listen
    transcripts into the run's corpus. **Empty-Listen-safe:** 0 transcripts →
    the run completes with 0 artifacts (valid), skipping generate + publish.
-2. **generate** — headless `claude -p` aims for up to
-   `AGENT_TARGET_ARTIFACTS` publishable Feed artifacts first (article,
-   insight-card, person-brief where earned), then may create one approval-held
+2. **generate** — headless `claude -p` first reads
+   `skills/plan-feed-mix/SKILL.md` and writes
+   `<run>/artifacts/mix-plan.md` so artifact selection is inspectable. In
+   `auto` / balanced runs with video enabled, that plan reserves one publishable
+   slot for a Gemini/Veo clip attempt; if no clip ships, the agent must record
+   the concrete skip reason instead of silently filling the run with text. It
+   then aims for up to `AGENT_TARGET_ARTIFACTS` publishable Feed artifacts first
+   (article, insight-card, person-brief where earned), then may create one approval-held
    social-post draft (banger-extractor) if the material earns it. This ordering
    is load-bearing: held outward drafts do not fill the Feed. The target is a
    cap, not a quota; fewer artifacts is correct when the material does not clear
@@ -231,11 +236,11 @@ run scratch.
    `AGENT_MEDIA_FOCUS=podcast` makes the generator try to prove one real
    `make-podcast` audio artifact before filling the rest of the run, but only if
    a sustained through-line clears the podcast bar and Gemini TTS is configured.
-   `AGENT_MEDIA_FOCUS=video` does the same for one `clip` artifact. With
+   `AGENT_MEDIA_FOCUS=video` makes the clip slot the first proof artifact. With
    `AGENT_ENABLE_VIDEO=1`, Gemini/Veo enables the preferred
    `make-cheap-video` path, while `FAL_KEY` enables the higher-control
-   `make-clip` Seedance path. `balanced` is the default: pick the strongest
-   format for the material and do not force media variety.
+   `make-clip` Seedance path. `balanced` is the default, but video-enabled
+   balanced runs still attempt one clip before giving the whole run to text.
 3. **publish** — `tc-publish/publish.ts --json` upserts each survivor to the user's
    `xyz.tinycloud.artifacts` (KV media + SQL feed row, `approval_status='approved'`)
    and emits the written media keys for run-status observability.

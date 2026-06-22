@@ -11,6 +11,7 @@ import {
 } from "../harness/agent/src/runs.ts";
 import {
   boundedProcessOutput,
+  buildArtifactMixPlanStep,
   buildGenerationArgs,
   buildInteractionBackpressureStep,
   buildMediaFocusStep,
@@ -244,7 +245,9 @@ describe("agent runner generation prompt", () => {
       );
       const systemPrompt = String(args[args.indexOf("--system-prompt") + 1]);
       expect(systemPrompt).toContain("HERO IMAGES");
-      expect(systemPrompt).toContain("OPTIONAL CLIP");
+      expect(systemPrompt).toContain("ARTIFACT MIX PLAN");
+      expect(systemPrompt).toContain("VIDEO SLOT: reserve one publishable slot for a clip attempt");
+      expect(systemPrompt).toContain("EXPECTED CLIP SLOT");
       expect(systemPrompt).not.toContain("VIDEO SKIPPED");
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -269,6 +272,33 @@ describe("agent runner generation prompt", () => {
       .toContain("AGENT_ENABLE_VIDEO=1 plus a");
     expect(buildMediaFocusStep("balanced", providers(true, true, false, true)).join("\n"))
       .toContain("Pick the best formats");
+  });
+
+  test("reserves a video slot in the artifact mix plan for auto runs when video is enabled", () => {
+    const plan = buildArtifactMixPlanStep({
+      targetArtifacts: 3,
+      artifactsDir: "/tmp/artifacts",
+      mediaFocus: "balanced",
+      providers: providers(true, true, false, true),
+    }).join("\n");
+
+    expect(plan).toContain("skills/plan-feed-mix/SKILL.md");
+    expect(plan).toContain("/tmp/artifacts/mix-plan.md");
+    expect(plan).toContain("VIDEO SLOT: reserve one publishable slot for a clip attempt");
+    expect(plan).toContain("Do not silently skip");
+  });
+
+  test("does not reserve video when another explicit target takes priority", () => {
+    const plan = buildArtifactMixPlanStep({
+      targetArtifacts: 3,
+      artifactsDir: "/tmp/artifacts",
+      mediaFocus: "balanced",
+      providers: providers(true, true, false, true),
+      targetArtifactType: "article",
+    }).join("\n");
+
+    expect(plan).toContain("VIDEO SLOT: video is available, but this run has a different explicit");
+    expect(plan).not.toContain("reserve one publishable slot for a clip attempt");
   });
 
   test("can target one artifact type without turning it into a quota", () => {

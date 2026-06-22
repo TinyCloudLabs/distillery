@@ -265,6 +265,90 @@ function livePrereqChecks(agentStateDir: string, agentRunsDir: string, devEnvPat
   return checks;
 }
 
+function stringField(row: Record<string, unknown>, key: string): string {
+  const value = row[key];
+  return typeof value === "string" ? value : "";
+}
+
+async function smithersStaleRunCheck(timeoutMs: number): Promise<Check> {
+  const command = "bunx smithers-orchestrator ps --all --json";
+  try {
+    const res = await execFileAsync("bunx", ["smithers-orchestrator", "ps", "--all", "--json"], {
+      cwd: repoRoot,
+      timeout: Math.min(timeoutMs, 30_000),
+      maxBuffer: 3 * 1024 * 1024,
+    });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(res.stdout);
+    } catch {
+      return {
+        name: "Smithers stale runs",
+        status: "warn",
+        ok: false,
+        command,
+        detail: `could not parse Smithers run table JSON: ${detail(res.stdout, res.stderr)}`,
+      };
+    }
+
+    const rawRuns = Array.isArray((parsed as { runs?: unknown }).runs)
+      ? (parsed as { runs: unknown[] }).runs
+      : Array.isArray(parsed)
+        ? parsed
+        : [];
+    const staleRuns = rawRuns
+      .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+      .filter((row) => {
+        const status = stringField(row, "status").toLowerCase();
+        const state = stringField(row, "state").toLowerCase();
+        const dbStatus = stringField(row, "dbStatus").toLowerCase();
+        const unhealthy = row.unhealthy && typeof row.unhealthy === "object" ? (row.unhealthy as Record<string, unknown>) : {};
+        const unhealthyKind =
+          typeof unhealthy.kind === "string" ? unhealthy.kind.toLowerCase() : "";
+        return status === "stale" || state === "stale" || unhealthyKind.includes("stale") || (dbStatus === "running" && state === "stale");
+      });
+
+    if (staleRuns.length === 0) {
+      return {
+        name: "Smithers stale runs",
+        status: "pass",
+        ok: true,
+        command,
+        detail: `no stale Smithers runs among ${rawRuns.length} recorded run${rawRuns.length === 1 ? "" : "s"}`,
+      };
+    }
+
+    const summaries = staleRuns.slice(0, 3).map((row) => {
+      const unhealthy = row.unhealthy && typeof row.unhealthy === "object" ? (row.unhealthy as Record<string, unknown>) : {};
+      const id = stringField(row, "id") || stringField(row, "runId") || "unknown";
+      const workflow = stringField(row, "workflow") || "unknown workflow";
+      const step = stringField(row, "step") || "unknown step";
+      const status = stringField(row, "status") || "unknown";
+      const dbStatus = stringField(row, "dbStatus") || "unknown";
+      const kind = typeof unhealthy.kind === "string" ? unhealthy.kind : "stale";
+      const lastHeartbeat = typeof unhealthy.lastHeartbeatAt === "string" ? `, lastHeartbeat=${unhealthy.lastHeartbeatAt}` : "";
+      return `${id} (${workflow}, step=${step}, status=${status}, dbStatus=${dbStatus}, ${kind}${lastHeartbeat})`;
+    });
+    const firstId = stringField(staleRuns[0]!, "id") || stringField(staleRuns[0]!, "runId") || "<run-id>";
+    return {
+      name: "Smithers stale runs",
+      status: "blocked",
+      ok: false,
+      command,
+      detail: `${staleRuns.length} stale Smithers run${staleRuns.length === 1 ? "" : "s"} need triage before more live work: ${summaries.join("; ")}. Inspect with \`bun run smithers:why -- ${firstId}\` and \`bunx smithers-orchestrator inspect ${firstId}\`; cancel only after inspection with \`bun run smithers:cancel -- ${firstId}\`.`,
+    };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    return {
+      name: "Smithers stale runs",
+      status: "warn",
+      ok: false,
+      command,
+      detail: `could not read Smithers run table: ${detail(e.stdout, e.stderr, e.message)}`,
+    };
+  }
+}
+
 async function writeReport(report: { reportPath: string }): Promise<string> {
   const reportsDir = resolve(repoRoot, ".smithers", "reports");
   await mkdir(reportsDir, { recursive: true });
@@ -297,6 +381,9 @@ export default smithers((ctx) => (
         for (const check of livePrereqChecks(agentStateDir, agentRunsDir, devEnv)) {
           checks.push(check);
         }
+        const staleRunCheck = await smithersStaleRunCheck(timeoutMs);
+        checks.push(staleRunCheck);
+        if (staleRunCheck.command) commands.push(staleRunCheck.command);
 
         const commandChecks = [
           await runCheck("agent runner tests", "bun", ["test", "tests/agent-runner.test.ts"], {
@@ -336,6 +423,7 @@ export default smithers((ctx) => (
             "This workflow does not start Claude, Gemini, FAL, TinyCloud writes, or a live agent run.",
             "It is the preflight gate before `agent-run-staged` when you want to prove the full delegated loop.",
             "Warnings identify partial media coverage; blockers identify conditions that should be fixed before a live run.",
+            "A stale Smithers run is treated as operator backpressure: inspect before cancelling, then rerun readiness.",
           ],
         };
         report.reportPath = await writeReport(report);

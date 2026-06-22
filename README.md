@@ -92,6 +92,9 @@ No script in any artifact skill calls a model — judgment lives in the agent.
 - **make-cheap-video** — the preferred Gemini/Veo `clip` path: two short
   Veo 3.1 Lite segments stitched into a ~15s video, then saved/published
   through the same `clip` artifact contract as `make-clip`.
+- **plan-feed-mix** — the first-pass selection skill: chooses the intended
+  artifact mix before generation, reserves a video slot when video is enabled
+  in `auto` runs, and records explicit skip reasons in `mix-plan.md`.
 
 ### Outward drafts — born `approval_status: pending`, never auto-published
 
@@ -230,7 +233,8 @@ skills continuously and decides what happens to their output. It is the
   targets one artifact format or the full format matrix and runs the relevant
   deterministic tests without publishing or model/media spend. `feed-composition-
   smoke` sits above individual skills: it verifies ordering/freshness
-  backpressure, format diversity, published cap behavior, draft isolation, and
+  backpressure, artifact mix planning, video-slot reservation, format diversity,
+  published cap behavior, draft isolation, and
   same-signal dedup so a run remains a good feed rather than a pile of valid
   artifacts. `feed-loop-readiness` is the no-spend preflight for the delegated
   loop: it checks pushed repo state, Feed submodule alignment, active TinyCloud
@@ -248,6 +252,10 @@ skills continuously and decides what happens to their output. It is the
   actually reached TinyCloud. `POST /agent/run` accepts optional `{ artifactType }`; run
   status then carries `targetArtifactType` + `proof`, including video/audio/image
   media checks for targeted rich artifacts.
+  In `auto` runs with video enabled, generation reads `plan-feed-mix` first,
+  writes `mix-plan.md`, and reserves one publishable slot for a Gemini/Veo clip
+  attempt unless another explicit target takes priority. If no video ships, the
+  run must state why instead of silently filling the feed with text artifacts.
   Before publish it stamps `raw_artifact.producer` with run/delegation
   provenance so Feed cards can show which delegated run produced each durable
   artifact.

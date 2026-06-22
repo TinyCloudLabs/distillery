@@ -11,6 +11,7 @@ bun run smithers:list
 bun run smithers:ps
 bun run smithers:dev-mode
 bun run smithers:readiness
+bun run smithers:monitor
 bun run smithers:agent-run
 bun run smithers:agent-run:staged
 bun run smithers:media-smoke
@@ -39,10 +40,16 @@ bun run smithers:media-smoke
   Portless proxy. Run the launcher outside the sandbox or approve the
   unsandboxed dev-server command.
 
+`feed-composition-smoke` is the no-spend selection/composition gate. It checks
+preference backpressure, format exploration, cap behavior, draft isolation,
+same-signal dedup, and the delegated agent's `plan-feed-mix` video-slot policy
+so video-enabled `auto` runs do not silently regress to text-only feeds.
+
 `feed-loop-readiness` is the no-spend preflight before a delegated live run. It
 checks pushed Feed/Artifactory state, sibling Feed versus embedded submodule
-alignment, active TinyCloud delegation, stale runner lock state, Gemini/Veo/FAL
-media-provider readiness, and the deterministic agent/frontend/Smithers gates.
+alignment, active TinyCloud delegation, stale runner lock state, stale Smithers
+workflow state, Gemini/Veo/FAL media-provider readiness, and the deterministic
+agent/frontend/Smithers gates.
 It writes a JSON report under `.smithers/reports/` and does not start Claude,
 Gemini, FAL, TinyCloud writes, or `/agent/run`.
 
@@ -126,6 +133,10 @@ bun run smithers:agent-run:staged -- --input '{"artifactType":"podcast","logTail
 bun run smithers:agent-run:staged -- --input '{"artifactType":"article","logTail":80}'
 ```
 
+Without an explicit target, video-enabled `auto` runs still read
+`plan-feed-mix`, write `mix-plan.md`, and reserve one clip attempt. Use
+`artifactType:"clip"` when you want the run to fail proof unless a video lands.
+
 For now, treat `agent-run` as an operator/dev command, not the production HTTP
 control path. The HTTP server and Smithers workflows now share a disk-backed
 run lock in `AGENT_RUNS_DIR`, so only one delegated pipeline can use the mutable
@@ -157,6 +168,7 @@ agent work.
 
 ```sh
 bun run smithers:ps
+bun run smithers:monitor
 bun run smithers:why -- <run-id>
 bunx smithers-orchestrator inspect <run-id>
 bun run smithers:cancel -- <run-id>
@@ -167,5 +179,7 @@ has active work to preserve. A common local-dev case is a stale
 `agent-run-staged` preflight blocked by sandbox permissions on
 `~/.tinycloud-agent-runs/agent-run.lock`; cancelling clears Smithers' local run
 table, while the Artifactory runner lock remains governed separately by
-`GET /agent/runs`. If `cancel` exits non-zero but prints
+`GET /agent/runs`. `feed-loop-readiness` blocks on stale Smithers runs so the
+operator has to make a conscious inspect/cancel call before launching more live
+work. If `cancel` exits non-zero but prints
 `"status":"cancelled"`, verify with `bun run smithers:ps`.

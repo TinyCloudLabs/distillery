@@ -914,6 +914,65 @@ export function buildInteractionBackpressureStep(
   ];
 }
 
+export function buildArtifactMixPlanStep(options: {
+  targetArtifacts: number;
+  artifactsDir: string;
+  mediaFocus: "balanced" | "podcast" | "video";
+  providers: GenerationProviderAvailability;
+  targetArtifactType?: ArtifactType;
+}): string[] {
+  const target = options.targetArtifactType ?? "auto";
+  const reserveVideo =
+    options.providers.videoEnabled &&
+    (target === "auto" || target === "clip" || options.mediaFocus === "video");
+  const reservePodcast =
+    options.providers.geminiEnabled &&
+    (target === "auto" || target === "podcast" || options.mediaFocus === "podcast");
+
+  const lines = [
+    "0. ARTIFACT MIX PLAN: before generating artifacts, read",
+    "   skills/plan-feed-mix/SKILL.md and write a compact selection plan to",
+    `   ${options.artifactsDir}/mix-plan.md. This file is scratch evidence, not`,
+    "   a published artifact. The plan must name the intended slots and explicit",
+    "   skip reasons for any rich-media slot that does not land.",
+    `   Run target: ${target}; publishable cap: ${options.targetArtifacts}; media focus: ${options.mediaFocus}.`,
+  ];
+
+  if (reserveVideo) {
+    lines.push(
+      "   VIDEO SLOT: reserve one publishable slot for a clip attempt. Prefer",
+      "   skills/make-cheap-video/SKILL.md with Gemini/Veo. Do not silently skip",
+      "   video because text formats are easier; if no clip ships, write the",
+      "   concrete skip reason in mix-plan.md and in the final summary.",
+    );
+  } else if (options.providers.videoEnabled) {
+    lines.push(
+      "   VIDEO SLOT: video is available, but this run has a different explicit",
+      "   target. A clip is optional only if it strengthens the target proof.",
+    );
+  } else {
+    lines.push(
+      "   VIDEO SLOT: unavailable; note that AGENT_ENABLE_VIDEO=1 plus Gemini/Veo",
+      "   or FAL_KEY is required before clip artifacts can publish.",
+    );
+  }
+
+  if (reservePodcast) {
+    lines.push(
+      "   AUDIO SLOT: consider one podcast only when a sustained through-line",
+      "   earns real Gemini TTS audio; do not create audio-less podcast shells.",
+    );
+  }
+
+  lines.push(
+    "   Fill remaining slots with the strongest feed mix: hot-take, article,",
+    "   digest, insight-card, or person-brief as the corpus earns them. Preserve",
+    "   exploration; reader interactions are weak backpressure, not settled taste.",
+  );
+
+  return lines;
+}
+
 /** Build the `claude -p` argv for the generation step (feed-run recipe, scoped). */
 export function buildGenerationArgs(
   corpusDir: string,
@@ -934,6 +993,13 @@ export function buildGenerationArgs(
   const interactionBackpressureStep = buildInteractionBackpressureStep(
     options.interactionBackpressure,
   );
+  const artifactMixPlanStep = buildArtifactMixPlanStep({
+    targetArtifacts,
+    artifactsDir,
+    mediaFocus: config.mediaFocus,
+    providers,
+    ...(options.targetArtifactType ? { targetArtifactType: options.targetArtifactType } : {}),
+  });
   const podcastStep = geminiEnabled
     ? [
         "   - make-podcast for a sustained through-line that benefits from a short",
@@ -984,14 +1050,16 @@ export function buildGenerationArgs(
           "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
         ]
       : [
-          "4. OPTIONAL CLIP (make-cheap-video or make-clip): only if the corpus",
-          "   contains one unusually visual, emotionally legible reversal worth",
-          "   spending video on. Prefer the Gemini/Veo make-cheap-video path;",
+          "4. EXPECTED CLIP SLOT (make-cheap-video or make-clip): because video",
+          "   is enabled, the artifact mix plan reserves one clip attempt unless",
+          "   another explicit target takes priority. Look for a clear transcript-",
+          "   grounded visual metaphor or reversal worth spending video on. Prefer",
+          "   the Gemini/Veo make-cheap-video path;",
           "   use make-clip for higher-control FAL/Seedance reference-video clips.",
           "   Produce at most ONE contract-valid `clip` artifact with `video` set to the",
           "   captioned mp4 file name and `hero_image` set to poster.png. Use",
-          "   --out-dir " + artifactsDir + " when saving. Zero clips is valid and",
-          "   preferred over a mediocre clip.",
+          "   --out-dir " + artifactsDir + " when saving. If no clip ships, the",
+          "   final summary and mix-plan.md must say exactly why.",
           "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
         ]
     : [
@@ -1018,6 +1086,8 @@ export function buildGenerationArgs(
     ...targetArtifactTypeStep,
     "",
     ...interactionBackpressureStep,
+    "",
+    ...artifactMixPlanStep,
     "",
     "DO, in order, from the repo root. Read each skill's SKILL.md first.",
     "Every save MUST use the flag  --out-dir " + artifactsDir + "  (load-bearing:",
@@ -1073,7 +1143,7 @@ export function buildGenerationArgs(
       : `Distill the ${transcripts.length} transcript(s) in ${corpusDir} into up to ` +
         `${targetArtifacts} publishable internal artifacts for the Feed, then optionally one ` +
         `approval-held social-post draft` +
-        `${videoEnabled ? ", plus at most one excellent clip if justified" : ""}, `;
+        `${videoEnabled && !options.targetArtifactType ? ", with one reserved clip attempt" : ""}, `;
   const user =
     userLead +
     `save the survivors under ${artifactsDir} (do NOT publish), ` +

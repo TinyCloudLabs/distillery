@@ -22,6 +22,7 @@
     "smithers:cancel": "bunx smithers-orchestrator cancel",
     "smithers:dev-mode": "bunx smithers-orchestrator workflow run feed-dev-mode",
     "smithers:readiness": "bunx smithers-orchestrator workflow run feed-loop-readiness",
+    "smithers:monitor": "bunx smithers-orchestrator workflow run monitor-smithers",
     "smithers:agent-run": "bunx smithers-orchestrator workflow run agent-run",
     "smithers:agent-run:staged": "bunx smithers-orchestrator workflow run agent-run-staged",
     "smithers:artifact-types": "bunx smithers-orchestrator workflow run artifact-type-smoke",
