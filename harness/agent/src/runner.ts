@@ -82,6 +82,22 @@ export interface InteractionBackpressure {
   reason?: string;
 }
 
+export interface CorpusPlanSummary {
+  source: "selected" | "rotation" | "explicit";
+  offset: number;
+  candidateCount?: number;
+  selected: CorpusPlanSelection[];
+  skippedRecent?: number;
+  nextOffset?: number;
+}
+
+export interface CorpusPlanSelection {
+  id: string;
+  title?: string;
+  transcriptStorage?: "kv" | "inline" | "none";
+  reason: string;
+}
+
 export interface RunState {
   run_id: string;
   status: RunStatus;
@@ -89,6 +105,7 @@ export interface RunState {
   held?: HeldArtifactRef[];
   media?: RunMediaSummary;
   targetArtifactType?: ArtifactType;
+  corpusPlan?: CorpusPlanSummary;
   proof?: AgentRunProof;
   error?: string;
   startedAt: number;
@@ -148,6 +165,36 @@ interface ListenReadCursor {
   lastRunId?: string;
 }
 
+interface ListenCandidate {
+  id: string;
+  title: string;
+  started_at?: string;
+  transcript_storage: "kv" | "inline" | "none";
+}
+
+interface ListenCandidateList {
+  count: number;
+  offset: number;
+  candidates: ListenCandidate[];
+}
+
+interface SelectionLedgerEntry {
+  id: string;
+  title?: string;
+  runId: string;
+  selectedAt: string;
+}
+
+interface SelectionLedger {
+  selections: SelectionLedgerEntry[];
+}
+
+interface CorpusSelectionResult {
+  conversationIds: string[];
+  offset: number;
+  source: CorpusPlanSummary["source"];
+}
+
 export function parseListenReadCursor(raw: string): number {
   try {
     const parsed = JSON.parse(raw) as Partial<ListenReadCursor>;
@@ -164,6 +211,19 @@ export function nextListenReadOffset(offset: number, transcriptCount: number): n
   const safeOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
   const safeCount = Number.isInteger(transcriptCount) && transcriptCount > 0 ? transcriptCount : 1;
   return safeOffset + safeCount;
+}
+
+export function buildListenCandidateArgs(count: number, space: string, offset: number): string[] {
+  return [
+    SKILLS.listenRead,
+    "--list-candidates",
+    "--count",
+    String(count),
+    "--offset",
+    String(Math.max(0, Math.floor(offset))),
+    "--space",
+    space,
+  ];
 }
 
 export function buildListenReadArgs(
@@ -186,6 +246,63 @@ export function buildListenReadArgs(
   ];
   for (const id of conversationIds) args.push("--conversation-id", id);
   return args;
+}
+
+export function parseListenCandidateList(raw: string): ListenCandidateList {
+  const parsed = JSON.parse(raw) as { count?: unknown; offset?: unknown; candidates?: unknown };
+  const candidateRows = Array.isArray(parsed.candidates) ? parsed.candidates : [];
+  const candidates: ListenCandidate[] = candidateRows.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.id !== "string" || typeof record.title !== "string") return [];
+    const storage = record.transcript_storage;
+    if (storage !== "kv" && storage !== "inline" && storage !== "none") return [];
+    return [{
+      id: record.id,
+      title: record.title,
+      ...(typeof record.started_at === "string" ? { started_at: record.started_at } : {}),
+      transcript_storage: storage,
+    }];
+  });
+  return {
+    count: typeof parsed.count === "number" ? parsed.count : candidates.length,
+    offset: typeof parsed.offset === "number" ? parsed.offset : 0,
+    candidates,
+  };
+}
+
+export function selectCorpusCandidates(
+  candidates: readonly ListenCandidate[],
+  recentIds: ReadonlySet<string>,
+  limit: number,
+): { selected: CorpusPlanSelection[]; skippedRecent: number } {
+  const viable = candidates.filter((candidate) => candidate.transcript_storage !== "none");
+  const selected: CorpusPlanSelection[] = [];
+  let skippedRecent = 0;
+  for (const candidate of viable) {
+    if (selected.length >= limit) break;
+    if (recentIds.has(candidate.id)) {
+      skippedRecent += 1;
+      continue;
+    }
+    selected.push({
+      id: candidate.id,
+      title: candidate.title,
+      transcriptStorage: candidate.transcript_storage,
+      reason: "fresh candidate not selected in recent runs",
+    });
+  }
+  for (const candidate of viable) {
+    if (selected.length >= limit) break;
+    if (selected.some((entry) => entry.id === candidate.id)) continue;
+    selected.push({
+      id: candidate.id,
+      title: candidate.title,
+      transcriptStorage: candidate.transcript_storage,
+      reason: "recent fallback; not enough fresh transcript-backed candidates",
+    });
+  }
+  return { selected, skippedRecent };
 }
 
 /**
@@ -508,17 +625,14 @@ export async function prepareRunScratch(ctx: PipelineContext): Promise<void> {
 export async function runListenReadStage(ctx: PipelineContext): Promise<ListenReadStageResult> {
   // LISTEN-READ — pull the user's transcripts into a per-run corpus. EMPTY-SAFE:
   // exit 1 + "No non-empty transcripts" → 0 transcripts → valid, done.
-  const selectedIds = config.transcriptIds;
+  const selection = await planListenCorpus(ctx);
+  const selectedIds = selection.conversationIds;
   const hasSelectedIds = selectedIds.length > 0;
-  const configuredOffset = hasSelectedIds
-    ? 0
-    : config.transcriptRotation
-    ? await readListenReadCursor()
-    : config.transcriptOffset;
+  const configuredOffset = selection.offset;
   let usedOffset = configuredOffset;
   ctx.step(
     hasSelectedIds
-      ? `listen-read: fetching ${selectedIds.length} selected Listen conversation(s)`
+      ? `listen-read: fetching ${selectedIds.length} selected Listen conversation(s) (${selection.source})`
       : `listen-read: fetching the user's Listen transcripts ` +
         `(count ${config.transcriptCount}, offset ${configuredOffset})`,
   );
@@ -562,14 +676,109 @@ export async function runListenReadStage(ctx: PipelineContext): Promise<ListenRe
     ctx.onProgress(ctx.state);
     return { kind: "empty" };
   }
-  if (config.transcriptRotation && !hasSelectedIds) {
+  if (config.transcriptRotation && selection.source !== "explicit") {
     const nextOffset = nextListenReadOffset(usedOffset, config.transcriptCount);
     await writeListenReadCursor(nextOffset, ctx.state.run_id);
+    await maybeRecordCorpusSelections(ctx, nextOffset);
     ctx.step(`listen-read: ${transcripts.length} transcript(s) fetched; next offset ${nextOffset}`);
   } else {
+    await maybeRecordCorpusSelections(ctx);
     ctx.step(`listen-read: ${transcripts.length} transcript(s) fetched`);
   }
   return { kind: "ready", transcripts };
+}
+
+async function planListenCorpus(ctx: PipelineContext): Promise<CorpusSelectionResult> {
+  if (config.transcriptIds.length > 0) {
+    const selected = config.transcriptIds.map((id) => ({
+      id,
+      reason: "explicit AGENT_TRANSCRIPT_IDS override",
+    }));
+    ctx.state.corpusPlan = {
+      source: "explicit",
+      offset: 0,
+      selected,
+    };
+    await writeCorpusPlanScratch(ctx);
+    ctx.step(`corpus-plan: explicit ${selected.length} Listen conversation id(s)`);
+    return { conversationIds: config.transcriptIds, offset: 0, source: "explicit" };
+  }
+
+  const offset = config.transcriptRotation ? await readListenReadCursor() : config.transcriptOffset;
+  if (!config.transcriptSelection) {
+    ctx.state.corpusPlan = {
+      source: "rotation",
+      offset,
+      selected: [],
+    };
+    await writeCorpusPlanScratch(ctx);
+    ctx.step(`corpus-plan: selection disabled; using offset ${offset}`);
+    return { conversationIds: [], offset, source: "rotation" };
+  }
+
+  const recentIds = await readRecentSelectedConversationIds();
+  let candidateOffset = offset;
+  let candidates = await listListenCandidates(ctx, candidateOffset);
+  let selected = selectCorpusCandidates(candidates.candidates, recentIds, config.transcriptCount);
+  if (candidateOffset > 0 && selected.selected.length === 0) {
+    ctx.step(`corpus-plan: offset ${candidateOffset} had no transcript-backed candidates; retrying candidates from offset 0`);
+    candidateOffset = 0;
+    candidates = await listListenCandidates(ctx, candidateOffset);
+    selected = selectCorpusCandidates(candidates.candidates, recentIds, config.transcriptCount);
+  }
+
+  ctx.state.corpusPlan = {
+    source: selected.selected.length > 0 ? "selected" : "rotation",
+    offset: candidateOffset,
+    candidateCount: candidates.candidates.length,
+    selected: selected.selected,
+    skippedRecent: selected.skippedRecent,
+  };
+  await writeCorpusPlanScratch(ctx);
+  if (selected.selected.length > 0) {
+    ctx.step(
+      `corpus-plan: selected ${selected.selected.length}/${candidates.candidates.length} candidate(s) ` +
+        `at offset ${candidateOffset}; skipped recent=${selected.skippedRecent}`,
+    );
+    for (const entry of selected.selected) {
+      ctx.step(`corpus-plan: ${entry.id}${entry.title ? ` ${entry.title}` : ""} — ${entry.reason}`);
+    }
+    return {
+      conversationIds: selected.selected.map((entry) => entry.id),
+      offset: candidateOffset,
+      source: "selected",
+    };
+  }
+
+  ctx.step(
+    `corpus-plan: no transcript-backed candidates in ${candidates.candidates.length} listed row(s); ` +
+      `falling back to offset read`,
+  );
+  return { conversationIds: [], offset: candidateOffset, source: "rotation" };
+}
+
+async function listListenCandidates(ctx: PipelineContext, offset: number): Promise<ListenCandidateList> {
+  ctx.step(
+    `corpus-plan: listing up to ${config.transcriptCandidateCount} Listen candidate(s) ` +
+      `(offset ${offset})`,
+  );
+  const listed = await run(
+    "bun",
+    buildListenCandidateArgs(config.transcriptCandidateCount, ctx.space, offset),
+    "sandbox",
+    {
+      heartbeatMs: config.stageHeartbeatMs,
+      onHeartbeat: () => {
+        ctx.step(`corpus-plan: still listing candidates (offset ${offset})`);
+      },
+    },
+  );
+  if (listed.code !== 0) {
+    throw new Error(
+      `corpus candidate listing failed (exit ${listed.code}): ${listed.stderr.slice(-800) || listed.stdout.slice(-800)}`,
+    );
+  }
+  return parseListenCandidateList(listed.stdout);
 }
 
 async function executeListenRead(
@@ -617,6 +826,76 @@ async function writeListenReadCursor(nextOffset: number, runId: string): Promise
       null,
       2,
     ) + "\n",
+    { mode: 0o600 },
+  );
+}
+
+async function readSelectionLedger(): Promise<SelectionLedger> {
+  try {
+    const parsed = JSON.parse(await readFile(config.listenSelectionLedgerPath, "utf8")) as Partial<SelectionLedger>;
+    return {
+      selections: Array.isArray(parsed.selections)
+        ? parsed.selections.flatMap((entry) => {
+            if (!entry || typeof entry !== "object") return [];
+            const record = entry as unknown as Record<string, unknown>;
+            if (
+              typeof record.id !== "string" ||
+              typeof record.runId !== "string" ||
+              typeof record.selectedAt !== "string"
+            ) {
+              return [];
+            }
+            return [{
+              id: record.id,
+              ...(typeof record.title === "string" ? { title: record.title } : {}),
+              runId: record.runId,
+              selectedAt: record.selectedAt,
+            }];
+          })
+        : [],
+    };
+  } catch {
+    return { selections: [] };
+  }
+}
+
+async function readRecentSelectedConversationIds(): Promise<Set<string>> {
+  const ledger = await readSelectionLedger();
+  return new Set(ledger.selections.slice(0, 100).map((entry) => entry.id));
+}
+
+async function maybeRecordCorpusSelections(ctx: PipelineContext, nextOffset?: number): Promise<void> {
+  if (!ctx.state.corpusPlan || ctx.state.corpusPlan.selected.length === 0) return;
+  if (typeof nextOffset === "number") {
+    ctx.state.corpusPlan.nextOffset = nextOffset;
+    ctx.onProgress(ctx.state);
+  }
+  const existing = await readSelectionLedger();
+  const selectedAt = new Date().toISOString();
+  const additions = ctx.state.corpusPlan.selected.map((entry) => ({
+    id: entry.id,
+    ...(entry.title ? { title: entry.title } : {}),
+    runId: ctx.state.run_id,
+    selectedAt,
+  }));
+  await writeFile(
+    config.listenSelectionLedgerPath,
+    JSON.stringify(
+      {
+        selections: [...additions, ...existing.selections].slice(0, 250),
+      } satisfies SelectionLedger,
+      null,
+      2,
+    ) + "\n",
+    { mode: 0o600 },
+  );
+}
+
+async function writeCorpusPlanScratch(ctx: PipelineContext): Promise<void> {
+  if (!ctx.state.corpusPlan) return;
+  await writeFile(
+    join(ctx.artifactsDir, "corpus-plan.json"),
+    JSON.stringify(ctx.state.corpusPlan, null, 2) + "\n",
     { mode: 0o600 },
   );
 }

@@ -14,6 +14,7 @@ import {
   buildArtifactMixPlanStep,
   buildGenerationArgs,
   buildInteractionBackpressureStep,
+  buildListenCandidateArgs,
   buildListenReadArgs,
   buildMediaFocusStep,
   buildTargetArtifactTypeStep,
@@ -25,10 +26,12 @@ import {
   preflightArtifactMediaForPublish,
   publishedRefFromPublishStdout,
   nextListenReadOffset,
+  parseListenCandidateList,
   parseListenReadCursor,
   runPublishStage,
   sanitizeArtifactMediaForPublish,
   shouldPublishArtifact,
+  selectCorpusCandidates,
   stampArtifactRunProvenance,
   summarizeInteractionBackpressure,
   type PipelineContext,
@@ -97,12 +100,68 @@ describe("agent runner listen-read classification", () => {
     ]);
   });
 
+  test("builds candidate listing args for corpus planning", () => {
+    expect(buildListenCandidateArgs(25, "space-id", 10)).toEqual([
+      "skills/tc-listen-read/scripts/listen-read.ts",
+      "--list-candidates",
+      "--count",
+      "25",
+      "--offset",
+      "10",
+      "--space",
+      "space-id",
+    ]);
+  });
+
   test("parses and advances the listen-read cursor defensively", () => {
     expect(parseListenReadCursor(JSON.stringify({ nextOffset: 10 }))).toBe(10);
     expect(parseListenReadCursor(JSON.stringify({ nextOffset: -1 }))).toBe(0);
     expect(parseListenReadCursor("not json")).toBe(0);
     expect(nextListenReadOffset(10, 5)).toBe(15);
     expect(nextListenReadOffset(-1, 5)).toBe(5);
+  });
+
+  test("parses candidate list output defensively", () => {
+    const parsed = parseListenCandidateList(JSON.stringify({
+      count: 3,
+      offset: 5,
+      candidates: [
+        { id: "a", title: "Alpha", transcript_storage: "kv" },
+        { id: "b", title: "Beta", transcript_storage: "inline" },
+        { id: "bad", title: "Bad", transcript_storage: "unknown" },
+      ],
+    }));
+
+    expect(parsed.count).toBe(3);
+    expect(parsed.offset).toBe(5);
+    expect(parsed.candidates.map((candidate) => candidate.id)).toEqual(["a", "b"]);
+  });
+
+  test("selects fresh transcript-backed candidates before recent fallbacks", () => {
+    const selected = selectCorpusCandidates(
+      [
+        { id: "recent", title: "Recent", transcript_storage: "kv" },
+        { id: "empty", title: "Empty", transcript_storage: "none" },
+        { id: "fresh", title: "Fresh", transcript_storage: "inline" },
+        { id: "fresh-2", title: "Fresh 2", transcript_storage: "kv" },
+      ],
+      new Set(["recent"]),
+      2,
+    );
+
+    expect(selected.skippedRecent).toBe(1);
+    expect(selected.selected.map((entry) => entry.id)).toEqual(["fresh", "fresh-2"]);
+
+    const fallback = selectCorpusCandidates(
+      [
+        { id: "recent", title: "Recent", transcript_storage: "kv" },
+        { id: "fresh", title: "Fresh", transcript_storage: "inline" },
+      ],
+      new Set(["recent"]),
+      3,
+    );
+    expect(fallback.selected.map((entry) => entry.id)).toEqual(["fresh", "recent"]);
+    expect(fallback.selected[1]?.reason).toContain("recent fallback");
   });
 });
 

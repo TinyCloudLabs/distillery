@@ -143,6 +143,8 @@ Env (all optional):
 | `AGENT_TRANSCRIPT_ROTATION` | `1` | rotate live delegated runs through Listen pages instead of always reading the newest window |
 | `AGENT_TRANSCRIPT_OFFSET` | `0` | initial/manual Listen offset; used directly when rotation is disabled |
 | `AGENT_TRANSCRIPT_IDS` | unset | comma-separated Listen conversation IDs for operator/Smithers selected-corpus runs; bypasses rotation for that run |
+| `AGENT_TRANSCRIPT_SELECTION` | `1` | list candidate metadata first, avoid recently selected IDs, and expose `corpusPlan` on run status |
+| `AGENT_TRANSCRIPT_CANDIDATE_COUNT` | `25` | candidate metadata rows scanned before selecting the run corpus |
 | `AGENT_TARGET_ARTIFACTS` | `3` | target number of publishable, Feed-visible artifacts per run; quality can produce fewer |
 | `AGENT_MEDIA_FOCUS` | `balanced` | `balanced`, `podcast`, or `video`; dev/operator posture for proving richer media paths without forcing low-quality artifacts |
 | `AGENT_GEN_MODEL` | `opus` | model for the headless `claude -p` generate step |
@@ -220,15 +222,19 @@ publishable vs. held drafts, e.g. `1 publishable [article/foo] 1 held
 stderr tail so operators can see the final agent summary without opening the
 run scratch.
 
-1. **listen-read** — `tc-listen-read/listen-read.ts` pulls the user's Listen
-   transcripts into the run's corpus. The live agent stores a non-secret cursor
-   at `AGENT_RUNS_DIR/listen-read-cursor.json` and passes `--offset` so repeated
-   Feed runs rotate beyond the newest transcript window. If an offset is past
-   available data, the stage retries once from offset 0 and resets the cursor.
-   For planned corpus experiments, `AGENT_TRANSCRIPT_IDS=id1,id2` bypasses the
-   cursor and makes the read stage fetch those explicit Listen conversations.
-   The CLI also supports `--list-candidates` for low-payload selection visibility
-   before a Smithers planner chooses IDs.
+1. **corpus-plan + listen-read** — the agent first runs
+   `tc-listen-read --list-candidates`, filters out rows without transcript
+   storage, avoids recently selected conversation IDs from
+   `AGENT_RUNS_DIR/listen-selection-ledger.json`, and records the chosen IDs as
+   `corpusPlan` on run status. It then calls `tc-listen-read` with explicit
+   `--conversation-id` flags so generation sees the selected corpus. The live
+   agent also stores a non-secret cursor at
+   `AGENT_RUNS_DIR/listen-read-cursor.json` and passes `--offset` so repeated
+   Feed runs rotate beyond the newest transcript window. If candidate selection
+   finds no transcript-backed rows, the stage falls back to the older offset
+   read path; if an offset is past available data, it retries once from offset 0.
+   For operator/Smithers experiments, `AGENT_TRANSCRIPT_IDS=id1,id2` bypasses
+   automatic selection and fetches those explicit Listen conversations.
    **Empty-Listen-safe:** 0 transcripts → the run completes with 0 artifacts
    (valid), skipping generate + publish.
 2. **generate** — headless `claude -p` first reads

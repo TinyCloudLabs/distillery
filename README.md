@@ -261,8 +261,9 @@ skills continuously and decides what happens to their output. It is the
   through transcript windows instead of reusing the same latest conversations
   every time. `tc-listen-read` can also list candidate conversation metadata and
   fetch explicit `--conversation-id` selections; `AGENT_TRANSCRIPT_IDS` exposes
-  that path for operator/Smithers selected-corpus runs while the automatic
-  planner is being built.
+  that path for operator/Smithers selected-corpus runs. Normal Feed-triggered
+  runs now create an observable `corpusPlan` first: list candidates, avoid
+  recently selected Listen conversations, then fetch explicit selected IDs.
   Before publish it stamps `raw_artifact.producer` with run/delegation
   provenance so Feed cards can show which delegated run produced each durable
   artifact.

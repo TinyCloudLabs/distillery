@@ -233,6 +233,12 @@ export const config = {
   listenReadCursorPath: resolve(runsDir, "listen-read-cursor.json"),
   /** Optional explicit Listen conversation IDs for operator/Smithers selected-corpus runs. */
   transcriptIds: csvEnv("AGENT_TRANSCRIPT_IDS"),
+  /** Candidate metadata rows scanned before selecting a corpus window. */
+  transcriptCandidateCount: positiveIntegerEnv("AGENT_TRANSCRIPT_CANDIDATE_COUNT", 25),
+  /** Disable only for debugging the older offset-only reader path. */
+  transcriptSelection: booleanEnv("AGENT_TRANSCRIPT_SELECTION", true),
+  /** Durable non-secret ledger of recently selected Listen conversations. */
+  listenSelectionLedgerPath: resolve(runsDir, "listen-selection-ledger.json"),
   /** Target number of publishable, Feed-visible artifacts per run. */
   targetArtifacts: positiveIntegerEnv("AGENT_TARGET_ARTIFACTS", 3),
   /** Optional dev/operator posture for proving richer media paths. */
