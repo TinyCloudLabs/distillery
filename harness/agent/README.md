@@ -231,9 +231,11 @@ run scratch.
    `AGENT_MEDIA_FOCUS=podcast` makes the generator try to prove one real
    `make-podcast` audio artifact before filling the rest of the run, but only if
    a sustained through-line clears the podcast bar and Gemini TTS is configured.
-   `AGENT_MEDIA_FOCUS=video` does the same for one `make-clip` artifact, but only
-   when `FAL_KEY` and `AGENT_ENABLE_VIDEO=1` are set. `balanced` is the default:
-   pick the strongest format for the material and do not force media variety.
+   `AGENT_MEDIA_FOCUS=video` does the same for one `clip` artifact. With
+   `AGENT_ENABLE_VIDEO=1`, Gemini enables the lower-cost `make-cheap-video`
+   Veo path, while `FAL_KEY` enables the higher-control `make-clip` Seedance
+   path. `balanced` is the default: pick the strongest format for the material
+   and do not force media variety.
 3. **publish** — `tc-publish/publish.ts --json` upserts each survivor to the user's
    `xyz.tinycloud.artifacts` (KV media + SQL feed row, `approval_status='approved'`)
    and emits the written media keys for run-status observability.
@@ -326,6 +328,11 @@ report:
 bun skills/make-clip/scripts/video-smoke.ts --out-dir /tmp/video-smoke --keep
 bun run smithers:video-smoke
 ```
+
+For a lower-cost transcript-driven clip, use `skills/make-cheap-video/SKILL.md`.
+It generates two Veo 3.1 Lite segments with Gemini, stitches/trims them to the
+same `clip` artifact contract, then reuses the normal `make-clip` caption/save
+path so Feed and `tc-publish` do not need a new media type.
 
 `artifactType` defaults to `"auto"` and may be any value in the artifact
 registry. This is deliberately a quality-gated bias, not a quota: the runner

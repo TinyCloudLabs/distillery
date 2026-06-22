@@ -141,6 +141,13 @@ describe("agent runner pipeline context", () => {
 });
 
 describe("agent runner generation prompt", () => {
+  const providers = (
+    geminiEnabled: boolean,
+    videoEnabled: boolean,
+    falVideoEnabled = videoEnabled,
+    veoVideoEnabled = false,
+  ) => ({ geminiEnabled, videoEnabled, falVideoEnabled, veoVideoEnabled });
+
   function withMediaEnv<T>(env: Record<string, string | undefined>, fn: () => T): T {
     const keys = [
       "GOOGLE_AI_API_KEY",
@@ -245,20 +252,22 @@ describe("agent runner generation prompt", () => {
   });
 
   test("can bias a development run toward proving podcast media", () => {
-    expect(buildMediaFocusStep("podcast", { geminiEnabled: true, videoEnabled: false }).join("\n"))
+    expect(buildMediaFocusStep("podcast", providers(true, false)).join("\n"))
       .toContain("trying to prove the podcast");
-    expect(buildMediaFocusStep("podcast", { geminiEnabled: true, videoEnabled: false }).join("\n"))
+    expect(buildMediaFocusStep("podcast", providers(true, false)).join("\n"))
       .toContain("first publishable artifact");
-    expect(buildMediaFocusStep("podcast", { geminiEnabled: false, videoEnabled: false }).join("\n"))
+    expect(buildMediaFocusStep("podcast", providers(false, false)).join("\n"))
       .toContain("no Gemini provider is configured");
   });
 
   test("can bias a development run toward proving video media when enabled", () => {
-    expect(buildMediaFocusStep("video", { geminiEnabled: true, videoEnabled: true }).join("\n"))
+    expect(buildMediaFocusStep("video", providers(true, true, false, true)).join("\n"))
       .toContain("trying to prove the video");
-    expect(buildMediaFocusStep("video", { geminiEnabled: true, videoEnabled: false }).join("\n"))
-      .toContain("FAL_KEY and AGENT_ENABLE_VIDEO=1");
-    expect(buildMediaFocusStep("balanced", { geminiEnabled: true, videoEnabled: true }).join("\n"))
+    expect(buildMediaFocusStep("video", providers(true, true, false, true)).join("\n"))
+      .toContain("make-cheap-video");
+    expect(buildMediaFocusStep("video", providers(true, false)).join("\n"))
+      .toContain("AGENT_ENABLE_VIDEO=1 plus a");
+    expect(buildMediaFocusStep("balanced", providers(true, true, false, true)).join("\n"))
       .toContain("Pick the best formats");
   });
 

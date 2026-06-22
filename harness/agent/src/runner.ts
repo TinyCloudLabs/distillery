@@ -314,13 +314,26 @@ function buildGenerationProviderEnv(devEnv = readDevelopmentEnv()): Record<strin
   return env;
 }
 
-function generationProviderAvailability(): { geminiEnabled: boolean; videoEnabled: boolean } {
+interface GenerationProviderAvailability {
+  geminiEnabled: boolean;
+  videoEnabled: boolean;
+  falVideoEnabled: boolean;
+  veoVideoEnabled: boolean;
+}
+
+function generationProviderAvailability(): GenerationProviderAvailability {
   const providerEnv = buildGenerationProviderEnv();
+  const geminiEnabled = Boolean(
+    providerEnv.GOOGLE_AI_API_KEY || providerEnv.GEMINI_API_KEY || providerEnv.GOOGLE_API_KEY,
+  );
+  const videoFlagEnabled = providerEnv.AGENT_ENABLE_VIDEO === "1";
+  const falVideoEnabled = videoFlagEnabled && Boolean(providerEnv.FAL_KEY);
+  const veoVideoEnabled = videoFlagEnabled && geminiEnabled;
   return {
-    geminiEnabled: Boolean(
-      providerEnv.GOOGLE_AI_API_KEY || providerEnv.GEMINI_API_KEY || providerEnv.GOOGLE_API_KEY,
-    ),
-    videoEnabled: providerEnv.AGENT_ENABLE_VIDEO === "1" && Boolean(providerEnv.FAL_KEY),
+    geminiEnabled,
+    videoEnabled: falVideoEnabled || veoVideoEnabled,
+    falVideoEnabled,
+    veoVideoEnabled,
   };
 }
 
@@ -746,7 +759,7 @@ export async function stampArtifactRunProvenance(
 
 export function buildMediaFocusStep(
   focus: "balanced" | "podcast" | "video",
-  providers: { geminiEnabled: boolean; videoEnabled: boolean },
+  providers: GenerationProviderAvailability,
 ): string[] {
   if (focus === "podcast") {
     return providers.geminiEnabled
@@ -771,13 +784,16 @@ export function buildMediaFocusStep(
           "MEDIA FOCUS: this run is intentionally trying to prove the video",
           "clip path. Treat this as an operator proof of the media pipeline:",
           "prefer a clear, simple, transcript-grounded visual metaphor over a",
-          "perfect editorial short. Try to produce ONE make-clip artifact before",
-          "filling the run with text cards.",
+          "perfect editorial short. Try to produce ONE clip artifact before",
+          "filling the run with text cards. Prefer make-cheap-video when",
+          "Gemini/Veo is available; use make-clip when FAL/Seedance is the",
+          "available video provider or continuity needs the higher-control path.",
         ]
       : [
-          "MEDIA FOCUS REQUESTED: video, but FAL_KEY and AGENT_ENABLE_VIDEO=1",
-          "are both required. Do not create a clip shell. Continue with ordinary",
-          "publishable artifacts and state that video was unavailable.",
+          "MEDIA FOCUS REQUESTED: video, but AGENT_ENABLE_VIDEO=1 plus a",
+          "video-capable provider is required. Gemini enables make-cheap-video;",
+          "FAL_KEY enables make-clip. Do not create a clip shell. Continue with",
+          "ordinary publishable artifacts and state that video was unavailable.",
         ];
   }
 
@@ -824,8 +840,9 @@ export function buildTargetArtifactTypeStep(target?: ArtifactType): string[] {
     case "clip":
       return [
         ...common,
-        "This is an operator proof of the clip pipeline. Try `make-clip` before",
-        "text-only artifacts when AGENT_ENABLE_VIDEO=1 + FAL_KEY are available.",
+        "This is an operator proof of the clip pipeline. Try `make-cheap-video`",
+        "when AGENT_ENABLE_VIDEO=1 plus Gemini/Veo are available, or `make-clip`",
+        "when AGENT_ENABLE_VIDEO=1 plus FAL_KEY are available.",
         "Use the clearest transcript-grounded visual metaphor you can find; do",
         "not require a perfect editorial reversal before proving the media path.",
         "Text-only artifacts are not a substitute for this target.",
@@ -906,10 +923,10 @@ export function buildGenerationArgs(
   } = {},
 ): string[] {
   const targetArtifacts = config.targetArtifacts;
-  const { geminiEnabled, videoEnabled } = generationProviderAvailability();
+  const providers = generationProviderAvailability();
+  const { geminiEnabled, videoEnabled } = providers;
   const mediaFocusStep = buildMediaFocusStep(config.mediaFocus, {
-    geminiEnabled,
-    videoEnabled,
+    ...providers,
   });
   const targetArtifactTypeStep = buildTargetArtifactTypeStep(options.targetArtifactType);
   const interactionBackpressureStep = buildInteractionBackpressureStep(
@@ -953,27 +970,31 @@ export function buildGenerationArgs(
   const videoStep = videoEnabled
     ? clipProof
       ? [
-          "4. REQUIRED CLIP PROOF (make-clip): this run is explicitly testing",
-          "   video generation. Read skills/make-clip/SKILL.md and follow its",
-          "   speculative mode. Produce ONE contract-valid `clip` artifact with",
+          "4. REQUIRED CLIP PROOF (make-cheap-video or make-clip): this run is",
+          "   explicitly testing video generation. Prefer",
+          "   skills/make-cheap-video/SKILL.md when Gemini/Veo is configured for",
+          "   the cheaper proof path; use skills/make-clip/SKILL.md when FAL is",
+          "   configured and continuity needs the higher-control Seedance path.",
+          "   Produce ONE contract-valid `clip` artifact with",
           "   `video` set to the mp4 file name and `hero_image` set to poster.png.",
           "   Use --out-dir " + artifactsDir + " when saving. Keep it simple:",
           "   a clear transcript-grounded metaphor is enough for this proof.",
           "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
         ]
       : [
-          "4. OPTIONAL CLIP (make-clip): only if the corpus contains one unusually",
-          "   visual, emotionally legible reversal worth spending video on. Read",
-          "   skills/make-clip/SKILL.md and follow its speculative mode. Produce at",
-          "   most ONE contract-valid `clip` artifact with `video` set to the",
+          "4. OPTIONAL CLIP (make-cheap-video or make-clip): only if the corpus",
+          "   contains one unusually visual, emotionally legible reversal worth",
+          "   spending video on. Prefer make-cheap-video for lower-cost Gemini/Veo",
+          "   clips; use make-clip for higher-control FAL/Seedance clips. Produce",
+          "   at most ONE contract-valid `clip` artifact with `video` set to the",
           "   captioned mp4 file name and `hero_image` set to poster.png. Use",
           "   --out-dir " + artifactsDir + " when saving. Zero clips is valid and",
           "   preferred over a mediocre clip.",
           "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
         ]
     : [
-        "4. VIDEO SKIPPED: do NOT run make-clip in this run. It requires",
-        "   AGENT_ENABLE_VIDEO=1 and FAL_KEY because it is slower and spend-bearing.",
+        "4. VIDEO SKIPPED: do NOT run make-cheap-video or make-clip in this run.",
+        "   Video requires AGENT_ENABLE_VIDEO=1 plus Gemini/Veo or FAL_KEY.",
         "5. CRITIC (no human gate): re-read each saved artifact as a skeptical editor",
       ];
   const system = [

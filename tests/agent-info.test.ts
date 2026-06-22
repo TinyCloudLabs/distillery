@@ -18,7 +18,7 @@ describe("agent info media readiness", () => {
     });
   });
 
-  test("keeps video disabled until both FAL_KEY and AGENT_ENABLE_VIDEO=1 are present", () => {
+  test("keeps video disabled until a provider plus AGENT_ENABLE_VIDEO=1 are present", () => {
     expect(buildMediaReadiness({ FAL_KEY: "fal-test" }).video).toEqual({
       enabled: false,
       reason: "video provider configured, but AGENT_ENABLE_VIDEO=1 is not enabled",
@@ -26,7 +26,14 @@ describe("agent info media readiness", () => {
 
     expect(buildMediaReadiness({ FAL_KEY: "fal-test", AGENT_ENABLE_VIDEO: "1" }).video).toEqual({
       enabled: true,
-      reason: "video provider configured and enabled",
+      reason: "FAL video provider configured and enabled",
+    });
+
+    expect(
+      buildMediaReadiness({ GEMINI_API_KEY: "gemini-test", AGENT_ENABLE_VIDEO: "1" }).video,
+    ).toEqual({
+      enabled: true,
+      reason: "Gemini/Veo video provider configured and enabled",
     });
   });
 
