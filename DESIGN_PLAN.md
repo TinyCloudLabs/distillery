@@ -1,4 +1,9 @@
-# DESIGN_PLAN — Folio (Variant A) becomes the real feed UI
+# DESIGN_PLAN — Historical Folio Feed Plan
+
+> Legacy note: this plan targeted the old `harness/feed` Folio PWA. The active
+> Feed UI now lives in `submodules/feed` / the sibling `feed` repo. Use this file
+> only as design history unless intentionally migrating a useful detail into the
+> active Feed app.
 
 > Hunter: A chosen as direction for now, further refinement expected — iterate, don't re-explore.
 

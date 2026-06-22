@@ -1,16 +1,22 @@
 # harness/ops/launchd — the distillery heartbeat + durability (spec §7)
 
-Three launchd agents make distillery self-running on Hunter's Mac:
+Three legacy launchd agents made the original local Distillery/Folio feed
+self-running on Hunter's Mac. They are retained for historical installs and
+migration reference, but they are not the active Artifactory/Feed development
+path. New local development should use `bun run artifact:dev:https`, which
+serves `submodules/feed` plus `harness/agent` through Portless.
 
 | plist | what | KeepAlive? |
 |---|---|---|
 | `com.tinycloud.distillery.feedrun` | weekday-morning (Mon–Fri 07:00) headless feed-run | no — scheduled one-shot |
-| `com.tinycloud.distillery.server` | the feed server (`bun src/server.ts` in `harness/feed/`, after `bun run build`) | **yes** — survives reboot |
+| `com.tinycloud.distillery.server` | legacy Folio feed server (`bun src/server.ts` in `harness/feed/`, after `bun run build`) | **yes** — survives reboot |
 | `com.tinycloud.distillery.tunnel` | the cloudflared named tunnel `distillery` → `localhost:4242` | **yes** — survives reboot |
 
-Nothing here is loaded automatically. The install script **templates + stages +
-validates** the plists; **you** run the `launchctl` commands (they touch your
-login session).
+Nothing here is loaded automatically. Before loading or keeping these jobs,
+confirm you actually want the old repo-local Folio feed path rather than the
+current TinyCloud-backed Feed/agent combo. The install script **templates +
+stages + validates** the plists; **you** run the `launchctl` commands (they
+touch your login session).
 
 ## Files
 

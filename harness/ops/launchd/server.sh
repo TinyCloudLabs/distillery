@@ -1,11 +1,15 @@
 #!/bin/bash
-# server.sh — the keep-alive feed-server wrapper (spec §7b).
+# server.sh — LEGACY keep-alive Folio feed-server wrapper (spec §7b).
 #
 # launchd's minimal env can't find bun and doesn't know the OpenKey allowlist.
 # This wrapper sources server.env (PATH + OPENKEY_ALLOWED_ADDRESSES +
 # TRANSCRIPT_DIRS so the Generate button's spawned run inherits them), builds the
 # SPA, then execs `bun src/server.ts`. KeepAlive in the plist restarts it on
 # crash; exec means the bun process IS the launchd job (signals + restart work).
+#
+# Current Artifactory/Feed development uses submodules/feed plus harness/agent
+# via `bun run artifact:dev:https`. Keep this wrapper only for old local
+# installs until they are migrated.
 
 set -euo pipefail
 

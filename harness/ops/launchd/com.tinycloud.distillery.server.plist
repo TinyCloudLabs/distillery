@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  com.tinycloud.distillery.server — the feed server, kept alive across reboots
+  com.tinycloud.distillery.server — LEGACY Folio feed server, kept alive across reboots
   (spec §7b). Runs harness/ops/launchd/server.sh, which sources server.env (PATH +
   OPENKEY_ALLOWED_ADDRESSES + TRANSCRIPT_DIRS for the Generate button) then
   builds web/dist and starts `bun src/server.ts` in feed/. KeepAlive +
   RunAtLoad so a reboot brings the feed back without Hunter. __REPO__ / __HOME__
   filled by install-launchd.sh.
+  Current development uses submodules/feed + harness/agent via artifact:dev:https.
 -->
 <plist version="1.0">
 <dict>

@@ -1,4 +1,9 @@
-# DESIGN_MEMORY — distillery feed
+# DESIGN_MEMORY — historical distillery Folio feed
+
+> Legacy note: this file records the design language of the old `harness/feed`
+> Folio PWA. The active Feed UI lives in `submodules/feed` / the sibling `feed`
+> repo. Treat these notes as historical reference, not as the default target for
+> new UI work.
 
 Durable design decisions. Read this before any UI work; iterate within it, don't re-explore.
 

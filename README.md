@@ -285,17 +285,21 @@ skills continuously and decides what happens to their output. It is the
   distills them into `[learned]` bullets in `PREFERENCES.md`; the next run's
   miner skills read `PREFERENCES.md` before generating. A deterministic guard
   protects human-authored lines.
-- **The Folio feed PWA** (`harness/feed/`) — a pulse-radio-style card feed over
-  `artifacts/`. Behind an OpenKey passkey front-door (single-user allowlist,
-  `/api/*` and `/media/*` gated). It serves the cards, records feedback,
-  exposes the preferences panel (`GET/PUT /api/preferences`, ETag-guarded),
-  and offers a **Generate** button (`POST /api/generate`) that fires the same
-  feed-run recipe on demand. The embedded TinyFeed submodule composes its first
-  page from a bounded newest-first window, keeping the newest artifact first
-  while mixing nearby types/sources/runs so a successful run does not render as
-  a raw cluster of similar cards. Its Preferences page also summarizes
-  interactions as early/directional weak signal, matching the agent runner's
-  backpressure posture.
+- **TinyFeed** (`submodules/feed/`) — the active Feed frontend. It is a
+  pure-client TinyCloud app: it reads `xyz.tinycloud.artifacts`, records
+  interactions to the artifacts interactions DB, delegates scoped Listen/artifact
+  access to the agent, and renders agent run history/proof/mix-plan visibility.
+  It composes its first page from a bounded newest-first window, keeping the
+  newest artifact first while mixing nearby types/sources/runs so a successful
+  run does not render as a raw cluster of similar cards. Its Preferences page
+  also summarizes interactions as early/directional weak signal, matching the
+  agent runner's backpressure posture.
+- **Legacy Folio feed harness** (`harness/feed/`) — the older local server/PWA
+  over repo-local `artifacts/`, `feedback/`, and `PREFERENCES.md`. It still
+  exists for historical review and for any old launchd installs that may point
+  at it, but it is not the active Artifactory/Feed migration path. Do not add
+  new product work there; migrate useful behavior into `submodules/feed`,
+  `harness/agent`, or `harness/feed-run`.
 
 ### The routing seam (in flight)
 
@@ -420,7 +424,9 @@ bun run artifact:test
 and verifies `GET /agent/info`. `artifact:test` runs both checks and then the
 distillery test suite.
 
-The Folio feed app has its own workspace under `harness/feed/`:
+The old Folio feed harness still has its own workspace under `harness/feed/`,
+but it is legacy. Prefer `artifact:dev`, `artifact:dev:https`, and
+`artifact:frontend:check`, which run `submodules/feed`.
 
 ```sh
 cd harness/feed && bun install && bun run build && bun run start
